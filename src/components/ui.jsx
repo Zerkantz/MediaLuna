@@ -139,7 +139,12 @@ export function Table({ columns, rows, empty = 'No hay registros disponibles.' }
 }
 
 export function TinyCalendar({ dates = [], selected, onSelect }) {
-  return <div className="date-chip-grid">{dates.map((date) => <button type="button" className={clsx('date-chip', selected === date && 'date-chip--selected')} key={date} onClick={() => onSelect(date)}><strong>{formatDate(date, 'dd')}</strong><span>{formatDate(date, 'MMM')}</span><small>{formatDate(date, 'EEE')}</small></button>)}</div>
+  return <div className="date-chip-grid">{dates.map((item) => {
+    const date = typeof item === 'string' ? item : item.fecha
+    const estado = typeof item === 'string' ? 'disponible' : item.estado
+    const disabled = estado && estado !== 'disponible'
+    return <button type="button" disabled={disabled} className={clsx('date-chip', selected === date && 'date-chip--selected', disabled && 'date-chip--disabled')} key={`${date}-${estado}`} onClick={() => !disabled && onSelect(date)}><strong>{formatDate(date, 'dd')}</strong><span>{formatDate(date, 'MMM')}</span><small>{disabled ? estado : formatDate(date, 'EEE')}</small></button>
+  })}</div>
 }
 
 export function PendingButton({ children, ...props }) {
