@@ -31,7 +31,6 @@ export const mockDatabase = {
       nombre: 'Sofía Valdés',
       rol: 'administrador',
       telefono: '+52 662 220 1001',
-      salonesIds: [],
     },
     {
       id: 'usr_dueno_01',
@@ -61,7 +60,6 @@ export const mockDatabase = {
       nombre: 'Lucía Ramírez',
       rol: 'cliente',
       telefono: '+52 662 220 1133',
-      salonesIds: [],
     },
     {
       id: 'usr_cliente_02',
@@ -71,7 +69,6 @@ export const mockDatabase = {
       nombre: 'Fernando Soto',
       rol: 'cliente',
       telefono: '+52 662 220 1155',
-      salonesIds: [],
     },
   ],
   salones: [
@@ -92,7 +89,7 @@ export const mockDatabase = {
       type: 'Bodas & sociales',
       urlImagen: salonPhotos.aurora[0],
       idPublicoCloudinary: 'media-luna/aurora-gran-salon',
-      ownerId: 'usr_dueno_01',
+      duenoId: 'usr_dueno_01',
     },
     {
       id: 'salon_terraza',
@@ -111,7 +108,7 @@ export const mockDatabase = {
       type: 'Terrazas & cocteles',
       urlImagen: salonPhotos.terraza[0],
       idPublicoCloudinary: 'media-luna/terraza-cobre',
-      ownerId: 'usr_dueno_01',
+      duenoId: 'usr_dueno_01',
     },
     {
       id: 'salon_nebula',
@@ -130,7 +127,7 @@ export const mockDatabase = {
       type: 'Corporativos & privados',
       urlImagen: salonPhotos.nebula[0],
       idPublicoCloudinary: 'media-luna/casa-nebula',
-      ownerId: 'usr_dueno_02',
+      duenoId: 'usr_dueno_02',
     },
     {
       id: 'salon_luna',
@@ -149,7 +146,7 @@ export const mockDatabase = {
       type: 'Íntimos & creativos',
       urlImagen: salonPhotos.luna[0],
       idPublicoCloudinary: 'media-luna/loft-media-luna',
-      ownerId: 'usr_dueno_02',
+      duenoId: 'usr_dueno_02',
     },
   ],
   servicios: [
@@ -192,7 +189,7 @@ export const mockDatabase = {
   ],
   disponibilidad: [
     { id: 'disp_01', estado: 'disponible', fecha: '2026-08-22', precio: 18500, salonesIds: ['salon_aurora'] },
-    { id: 'disp_02', estado: 'reservado', fecha: '2026-08-29', precio: 18500, salonesIds: ['salon_aurora'] },
+    { id: 'disp_02', estado: 'reservada', fecha: '2026-08-29', precio: 18500, salonesIds: ['salon_aurora'] },
     { id: 'disp_03', estado: 'disponible', fecha: '2026-08-30', precio: 12200, salonesIds: ['salon_terraza'] },
     { id: 'disp_04', estado: 'bloqueado', fecha: '2026-09-04', precio: 9800, salonesIds: ['salon_nebula'] },
     { id: 'disp_05', estado: 'disponible', fecha: '2026-09-11', precio: 9800, salonesIds: ['salon_nebula'] },

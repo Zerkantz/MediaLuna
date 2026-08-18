@@ -15,7 +15,7 @@ const normalizeProfile = (snapshot) => {
   return {
     id: snapshot.id,
     ...data,
-    salonesIds: Array.isArray(data.salonesIds) ? data.salonesIds : [],
+    salonesIds: data.rol === 'dueno' && Array.isArray(data.salonesIds) ? data.salonesIds : [],
   }
 }
 
@@ -54,7 +54,6 @@ export async function registerWithFirebase({ nombre, correo, telefono, password 
     nombre,
     rol: 'cliente',
     telefono,
-    salonesIds: [],
   }
 
   await setDoc(doc(db, USERS_COLLECTION, credential.user.uid), profile)

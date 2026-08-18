@@ -16,7 +16,7 @@ export const getDocument = async (collectionName, id) => {
 }
 
 export const createDocument = async (collectionName, data) => {
-  const document = { ...data, id: data.id ?? `${collectionName.slice(0, -1)}_${Date.now()}` }
+  const document = { ...data, id: data.id || `${collectionName.slice(0, -1)}_${Date.now()}` }
   database[collectionName] = [...(database[collectionName] ?? []), document]
   return wait(document)
 }

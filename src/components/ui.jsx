@@ -44,8 +44,17 @@ export function BrandMark({ compact = false }) {
 
 export function Button({ children, to, variant = 'primary', size = 'md', className, icon: Icon, pending = false, ...props }) {
   const classes = clsx('button', `button--${variant}`, `button--${size}`, className)
+  const pendingProps = pending
+    ? {
+      title: props.title ?? 'Pendiente de conexión',
+      onClick: props.onClick ?? ((event) => {
+        event.preventDefault()
+        window.alert('Pendiente de conexión')
+      }),
+    }
+    : {}
   const content = <>{Icon && <Icon size={16} strokeWidth={1.8} />}{children}{pending && <span className="button__pending">Pendiente de conexión</span>}</>
-  return to ? <Link to={to} className={classes} {...props}>{content}</Link> : <button className={classes} {...props}>{content}</button>
+  return to ? <Link to={to} className={classes} {...pendingProps} {...props}>{content}</Link> : <button className={classes} {...pendingProps} {...props}>{content}</button>
 }
 
 export function Badge({ children, tone = 'neutral', dot = false }) {
@@ -54,8 +63,8 @@ export function Badge({ children, tone = 'neutral', dot = false }) {
 
 export function StatusBadge({ status }) {
   const tone = ['pagado', 'confirmada', 'disponible', 'activo'].includes(status) ? 'success'
-    : ['pendiente', 'por confirmar', 'reservado'].includes(status) ? 'warning'
-      : ['bloqueado', 'cancelada', 'inactivo'].includes(status) ? 'danger' : 'neutral'
+    : ['pendiente', 'por confirmar', 'reservada', 'reservado'].includes(status) ? 'warning'
+      : ['bloqueada', 'bloqueado', 'cancelada', 'inactivo'].includes(status) ? 'danger' : 'neutral'
   return <Badge tone={tone} dot>{status}</Badge>
 }
 

@@ -17,7 +17,6 @@ import {
   ImagePlus,
   LockKeyhole,
   MessageCircle,
-  MoreHorizontal,
   Pencil,
   Phone,
   Plus,
@@ -54,9 +53,12 @@ import {
 } from '../components/ui'
 
 const roleLabel = { cliente: 'cliente', dueno: 'dueño', administrador: 'administrador' }
-const reservationBelongsToOwner = (reservation, ownerId) => Array.isArray(reservation.duenoId)
-  ? reservation.duenoId.includes(ownerId)
-  : reservation.duenoId === ownerId
+const reservationBelongsToOwner = (reservation, ownerId, ownerSalonIds = []) => {
+  const ownedByReservation = Array.isArray(reservation.duenoId)
+    ? reservation.duenoId.includes(ownerId)
+    : reservation.duenoId === ownerId
+  return ownedByReservation || reservation.salonesIds?.some((salonId) => ownerSalonIds.includes(salonId))
+}
 
 function PanelIntro({ eyebrow = 'MediaLuna', title, description, actions, crumbs = [] }) {
   return <><Breadcrumbs items={crumbs.length ? crumbs : [{ label: title }]} /><PageHeader eyebrow={eyebrow} title={title} description={description} actions={actions} /></>
@@ -86,38 +88,46 @@ export function ClientReservationDetailPage() {
   if (!reservation) return <AnimatedPage className="panel-page"><EmptyState title="Reservación no encontrada" description="El registro no existe en la capa mock." action={<Button to="/cliente/reservaciones">Volver a reservaciones</Button>} /></AnimatedPage>
   const salon = data.salones.find((item) => reservation.salonesIds.includes(item.id))
   const services = data.servicios.filter((service) => reservation.serviciosIds.includes(service.id))
-  return <AnimatedPage className="panel-page"><PanelIntro eyebrow="Detalle de reservación" title={salon?.name ?? 'Tu reservación'} description={`Creada el ${formatDate(reservation.fechaCreacion, 'd MMMM yyyy')}.`} crumbs={[{ label: 'Cliente', to: '/cliente' }, { label: 'Mis reservaciones', to: '/cliente/reservaciones' }, { label: 'Detalle' }]} actions={<Button to="/cliente/reservaciones" variant="secondary" icon={ArrowRight}>Volver al historial</Button>} /><div className="detail-status-banner"><div><StatusBadge status={reservation.estadoReservacion} /><h2>{formatDate(reservation.fecha, 'EEEE d MMMM yyyy')}</h2><p><MapPinIcon /> {salon?.direccion}</p></div><div className="detail-status-banner__payment"><span>Estado de pago</span><StatusBadge status={reservation.estadoPago} /></div></div><div className="workspace-grid workspace-grid--detail"><section className="workspace-card"><SectionTitle title="Resumen de tu reservación" /><div className="reservation-detail-image"><img src={salon?.photos?.[0]} alt={salon?.name} /><div><span className="eyebrow">Salón reservado</span><h3>{salon?.name}</h3><p>{salon?.type} · Hasta {salon?.capacity} personas</p></div></div><div className="detail-breakdown"><div><span>Precio del salón</span><strong>{formatCurrency(reservation.precioSalon)}</strong></div><div><span>Servicios extra</span><strong>{formatCurrency(reservation.totalServicios)}</strong></div><div className="detail-breakdown__total"><span>Total</span><strong>{formatCurrency(reservation.total)}</strong></div></div>{services.length > 0 && <div className="selected-service-list"><span className="eyebrow">Extras incluidos</span>{services.map((service) => <div key={service.id}><Sparkles size={14} /> {service.nombre}<strong>{formatCurrency(service.precio)}</strong></div>)}</div>}</section><aside className="workspace-card chat-card"><div className="chat-card__head"><span className="avatar">MC</span><div><strong>Mariana Castañeda</strong><small>Dueña del espacio · responde pronto</small></div><Badge tone="success" dot>En línea</Badge></div><div className="chat-preview"><div className="chat-bubble chat-bubble--owner">¡Hola! Será un gusto acompañarte en tu celebración.</div><div className="chat-bubble chat-bubble--me">¡Qué emoción! Nos vemos pronto.</div><span className="chat-placeholder"><MessageCircle size={14} /> Chat completo pendiente de conexión</span></div><div className="chat-actions"><Button variant="secondary" size="sm" pending icon={MessageCircle}>Abrir chat</Button><Button variant="ghost" size="sm" pending icon={Phone}>Llamar</Button><Button variant="ghost" size="sm" pending icon={Video}>Video</Button></div></aside></div></AnimatedPage>
+  return <AnimatedPage className="panel-page"><PanelIntro eyebrow="Detalle de reservación" title={salon?.name ?? 'Tu reservación'} description={`Creada el ${formatDate(reservation.fechaCreacion, 'd MMMM yyyy')}.`} crumbs={[{ label: 'Cliente', to: '/cliente' }, { label: 'Mis reservaciones', to: '/cliente/reservaciones' }, { label: 'Detalle' }]} actions={<Button to="/cliente/reservaciones" variant="secondary" icon={ArrowRight}>Volver al historial</Button>} /><div className="detail-status-banner"><div><StatusBadge status={reservation.estadoReservacion} /><h2>{formatDate(reservation.fecha, 'EEEE d MMMM yyyy')}</h2><p><MapPinIcon /> {salon?.direccion}</p></div><div className="detail-status-banner__payment"><span>Estado de pago</span><StatusBadge status={reservation.estadoPago} />{reservation.estadoPago !== 'pagado' && <Button variant="secondary" size="sm" pending icon={CreditCard}>Pagar</Button>}</div></div><div className="workspace-grid workspace-grid--detail"><section className="workspace-card"><SectionTitle title="Resumen de tu reservación" /><div className="reservation-detail-image"><img src={salon?.photos?.[0]} alt={salon?.name} /><div><span className="eyebrow">Salón reservado</span><h3>{salon?.name}</h3><p>{salon?.type} · Hasta {salon?.capacity} personas</p></div></div><div className="detail-breakdown"><div><span>Precio del salón</span><strong>{formatCurrency(reservation.precioSalon)}</strong></div><div><span>Servicios extra</span><strong>{formatCurrency(reservation.totalServicios)}</strong></div><div className="detail-breakdown__total"><span>Total</span><strong>{formatCurrency(reservation.total)}</strong></div></div>{services.length > 0 && <div className="selected-service-list"><span className="eyebrow">Extras incluidos</span>{services.map((service) => <div key={service.id}><Sparkles size={14} /> {service.nombre}<strong>{formatCurrency(service.precio)}</strong></div>)}</div>}</section><aside className="workspace-card chat-card"><div className="chat-card__head"><span className="avatar">MC</span><div><strong>Mariana Castañeda</strong><small>Dueña del espacio · responde pronto</small></div><Badge tone="success" dot>En línea</Badge></div><div className="chat-preview"><div className="chat-bubble chat-bubble--owner">¡Hola! Será un gusto acompañarte en tu celebración.</div><div className="chat-bubble chat-bubble--me">¡Qué emoción! Nos vemos pronto.</div><span className="chat-placeholder"><MessageCircle size={14} /> Chat completo pendiente de conexión</span></div><div className="chat-actions"><Button variant="secondary" size="sm" pending icon={MessageCircle}>Abrir chat</Button><Button variant="ghost" size="sm" pending icon={Phone}>Llamar</Button><Button variant="ghost" size="sm" pending icon={Video}>Video</Button></div></aside></div></AnimatedPage>
 }
 
 export function ClientProfilePage() {
-  const { currentUser } = useApp()
-  return <AnimatedPage className="panel-page"><PanelIntro eyebrow="Tu cuenta" title="Mi perfil" description="Mantén tus datos listos para cada reservación." crumbs={[{ label: 'Cliente', to: '/cliente' }, { label: 'Mi perfil' }]} /><div className="profile-layout"><section className="workspace-card profile-card"><div className="profile-card__avatar avatar avatar--large">{currentUser?.nombre?.split(' ').map((part) => part[0]).join('').slice(0, 2)}</div><h2>{currentUser?.nombre}</h2><p>{currentUser?.correo}</p><Badge tone="lilac">Cliente</Badge><div className="profile-meta"><span><Phone size={15} /> {currentUser?.telefono}</span><span><CalendarDays size={15} /> Miembro desde {formatDate(currentUser?.fechaCreacion, 'MMMM yyyy')}</span></div></section><section className="workspace-card"><SectionTitle title="Datos personales" description="La edición se conectará con Firebase después." /><div className="form-grid"><label className="field"><span>Nombre</span><input defaultValue={currentUser?.nombre} /></label><label className="field"><span>Teléfono</span><input defaultValue={currentUser?.telefono} /></label><label className="field field--full"><span>Correo electrónico</span><input defaultValue={currentUser?.correo} type="email" /></label></div><Button variant="secondary" onClick={() => alert('Guardado pendiente de conexión')} icon={Check}>Guardar cambios</Button></section></div></AnimatedPage>
+  const { currentUser, updateClientProfile } = useApp()
+  const [form, setForm] = useState({ nombre: currentUser?.nombre ?? '', telefono: currentUser?.telefono ?? '', correo: currentUser?.correo ?? '' })
+  const [error, setError] = useState('')
+  const submit = async (event) => {
+    event.preventDefault()
+    setError('')
+    const result = await updateClientProfile(form)
+    if (!result.ok) setError(result.message)
+  }
+  return <AnimatedPage className="panel-page"><PanelIntro eyebrow="Tu cuenta" title="Mi perfil" description="Mantén tus datos listos para cada reservación." crumbs={[{ label: 'Cliente', to: '/cliente' }, { label: 'Mi perfil' }]} /><div className="profile-layout"><section className="workspace-card profile-card"><div className="profile-card__avatar avatar avatar--large">{currentUser?.nombre?.split(' ').map((part) => part[0]).join('').slice(0, 2)}</div><h2>{currentUser?.nombre}</h2><p>{currentUser?.correo}</p><Badge tone="lilac">Cliente</Badge><div className="profile-meta"><span><Phone size={15} /> {currentUser?.telefono}</span><span><CalendarDays size={15} /> Miembro desde {formatDate(currentUser?.fechaCreacion, 'MMMM yyyy')}</span></div></section><section className="workspace-card"><SectionTitle title="Datos personales" description="Estos campos se guardan en usuarios/{uid}." /><form onSubmit={submit}><div className="form-grid"><label className="field"><span>Nombre</span><input required value={form.nombre} onChange={(event) => setForm({ ...form, nombre: event.target.value })} /></label><label className="field"><span>Teléfono</span><input required value={form.telefono} onChange={(event) => setForm({ ...form, telefono: event.target.value })} /></label><label className="field field--full"><span>Correo electrónico</span><input required value={form.correo} type="email" onChange={(event) => setForm({ ...form, correo: event.target.value })} /></label></div>{error && <InfoNote tone="warning">{error}</InfoNote>}<Button variant="secondary" type="submit" icon={Check}>Guardar cambios</Button></form></section></div></AnimatedPage>
 }
 
 export function OwnerDashboard() {
   const { data, currentUser } = useApp()
-  const salons = data.salones.filter((salon) => currentUser?.salonesIds?.includes(salon.id))
-  const reservations = data.reservaciones.filter((reservation) => reservationBelongsToOwner(reservation, currentUser?.id))
+  const salons = data.salones.filter((salon) => currentUser?.salonesIds?.includes(salon.id) || salon.duenoId === currentUser?.id)
+  const reservations = data.reservaciones.filter((reservation) => reservationBelongsToOwner(reservation, currentUser?.id, currentUser?.salonesIds))
   const pending = reservations.filter((reservation) => reservation.estadoReservacion !== 'confirmada')
   return <AnimatedPage className="panel-page"><PanelIntro eyebrow="Espacio del dueño" title={`Hola, ${currentUser?.nombre?.split(' ')[0] ?? 'Mariana'}.`} description="Una vista clara de tus espacios y lo que viene." crumbs={[{ label: 'Resumen' }]} /><InfoNote tone="lilac"><ShieldCheck size={16} /> <strong>Vista de solo lectura.</strong> Tus datos se muestran desde Firestore cuando la conexión está disponible.</InfoNote><div className="metric-grid"><MetricCard label="Salones asignados" value={salons.length} helper="espacios activos" icon={Store} accent="gold" /><MetricCard label="Por confirmar" value={pending.length} helper="requieren atención" icon={Clock3} accent="rose" /><MetricCard label="Este mes" value={formatCurrency(reservations.reduce((sum, item) => sum + item.total, 0))} helper="valor reservado" icon={CircleDollarSign} accent="lilac" /></div><div className="workspace-grid"><section className="workspace-card"><SectionTitle title="Reservaciones pendientes" description="Clientes que esperan tu confirmación." action={<Button to="/dueno/reservaciones" variant="ghost" size="sm">Ver todas <ArrowRight size={14} /></Button>} />{pending.length ? <ReservationList reservations={pending} data={data} showClient /> : <EmptyState icon={CalendarCheck2} title="Todo en calma" description="No tienes solicitudes pendientes." />}</section><section className="workspace-card"><SectionTitle title="Tus espacios" action={<Button to="/dueno/salones" variant="ghost" size="sm">Ver salones <ArrowRight size={14} /></Button>} /><div className="owner-salon-mini-list">{salons.map((salon) => <Link to="/dueno/salones" className="owner-salon-mini" key={salon.id}><img src={salon.photos?.[0]} alt={salon.name} /><span><strong>{salon.name}</strong><small>{salon.capacity} personas · <StatusBadge status={salon.active ? 'activo' : 'inactivo'} /></small></span><ArrowRight size={15} /></Link>)}</div></section></div></AnimatedPage>
 }
 
 export function OwnerSalonsPage() {
   const { data, currentUser } = useApp()
-  const salons = data.salones.filter((salon) => currentUser?.salonesIds?.includes(salon.id))
-  return <AnimatedPage className="panel-page"><PanelIntro eyebrow="Tu inventario" title="Salones asignados" description="Consulta la información publicada de tus espacios." crumbs={[{ label: 'Dueño', to: '/dueno' }, { label: 'Mis salones' }]} /><div className="owner-salon-grid">{salons.map((salon) => <article className="owner-salon-card workspace-card" key={salon.id}><img src={salon.photos?.[0]} alt={salon.name} /><div className="owner-salon-card__body"><div className="owner-salon-card__head"><div><Badge tone="success" dot>Publicado</Badge><h2>{salon.name}</h2><p><MapPinIcon /> {getSalonLocation(salon)}</p></div><button className="icon-button" type="button" title="Edición pendiente" onClick={() => alert('Editar salón: pendiente de conexión')}><MoreHorizontal size={18} /></button></div><p className="muted-copy">{salon.description}</p><div className="owner-salon-card__meta"><span><Users size={15} /> {salon.capacity} personas</span><span><CircleDollarSign size={15} /> {formatCurrency(salon.basePrice)}</span></div><InfoNote>Solo lectura · las actualizaciones las gestiona administración.</InfoNote></div></article>)}</div></AnimatedPage>
+  const salons = data.salones.filter((salon) => currentUser?.salonesIds?.includes(salon.id) || salon.duenoId === currentUser?.id)
+  return <AnimatedPage className="panel-page"><PanelIntro eyebrow="Tu inventario" title="Salones asignados" description="Consulta la información publicada de tus espacios." crumbs={[{ label: 'Dueño', to: '/dueno' }, { label: 'Mis salones' }]} /><div className="owner-salon-grid">{salons.map((salon) => <article className="owner-salon-card workspace-card" key={salon.id}><img src={salon.photos?.[0]} alt={salon.name} /><div className="owner-salon-card__body"><div className="owner-salon-card__head"><div><Badge tone="success" dot>Publicado</Badge><h2>{salon.name}</h2><p><MapPinIcon /> {getSalonLocation(salon)}</p></div></div><p className="muted-copy">{salon.description}</p><div className="owner-salon-card__meta"><span><Users size={15} /> {salon.capacity} personas</span><span><CircleDollarSign size={15} /> {formatCurrency(salon.basePrice)}</span></div><InfoNote>Solo lectura · las actualizaciones las gestiona administración.</InfoNote></div></article>)}</div></AnimatedPage>
 }
 
 export function OwnerReservationsPage() {
   const { data, currentUser } = useApp()
-  const reservations = data.reservaciones.filter((reservation) => reservationBelongsToOwner(reservation, currentUser?.id))
+  const reservations = data.reservaciones.filter((reservation) => reservationBelongsToOwner(reservation, currentUser?.id, currentUser?.salonesIds))
   const columns = [{ key: 'salon', label: 'Salón', render: (row) => { const salon = data.salones.find((item) => row.salonesIds.includes(item.id)); return <span className="table-person"><img src={salon?.photos?.[0]} alt="" /><strong>{salon?.name}</strong></span> } }, { key: 'fecha', label: 'Fecha', render: (row) => formatDate(row.fecha, 'd MMM yyyy') }, { key: 'cliente', label: 'Cliente', render: (row) => data.usuarios.find((item) => item.id === row.clienteId)?.nombre }, { key: 'total', label: 'Total', render: (row) => <strong>{formatCurrency(row.total)}</strong> }, { key: 'estadoReservacion', label: 'Estado', render: (row) => <StatusBadge status={row.estadoReservacion} /> }, { key: 'actions', label: '', render: () => <button className="icon-button" type="button" title="Ver detalle" onClick={() => alert('Detalle de reservación: pendiente de conexión')}><Eye size={16} /></button> }]
   return <AnimatedPage className="panel-page"><PanelIntro eyebrow="Agenda compartida" title="Reservaciones" description="Revisa las solicitudes y la agenda de tus espacios." crumbs={[{ label: 'Dueño', to: '/dueno' }, { label: 'Reservaciones' }]} actions={<Button to="/dueno/chats" variant="secondary" icon={MessageCircle}>Ver chats</Button>} /><div className="workspace-card"><div className="table-toolbar"><div className="table-toolbar__filters"><button type="button" className="toolbar-chip toolbar-chip--active"><Filter size={14} /> Todas</button><button type="button" className="toolbar-chip">Pendientes</button><button type="button" className="toolbar-chip">Confirmadas</button></div><button type="button" className="icon-button" title="Actualizar" onClick={() => alert('Datos mock actualizados')}><RefreshCcw size={16} /></button></div><Table columns={columns} rows={reservations} /></div></AnimatedPage>
 }
 
 export function OwnerChatsPage() {
   const { data, currentUser } = useApp()
-  const reservations = data.reservaciones.filter((reservation) => reservationBelongsToOwner(reservation, currentUser?.id))
+  const reservations = data.reservaciones.filter((reservation) => reservationBelongsToOwner(reservation, currentUser?.id, currentUser?.salonesIds))
   return <AnimatedPage className="panel-page"><PanelIntro eyebrow="Comunicación" title="Chats con clientes" description="Mantén cerca las conversaciones importantes de cada evento." crumbs={[{ label: 'Dueño', to: '/dueno' }, { label: 'Chats' }]} /><div className="chat-list-page"><div className="chat-threads workspace-card">{reservations.map((reservation, index) => { const client = data.usuarios.find((user) => user.id === reservation.clienteId); const salon = data.salones.find((item) => reservation.salonesIds.includes(item.id)); return <button className={clsx('chat-thread', index === 0 && 'chat-thread--active')} type="button" key={reservation.id} onClick={() => alert('Chat pendiente de conexión')}><span className="avatar">{client?.nombre?.split(' ').map((part) => part[0]).join('').slice(0, 2)}</span><span><strong>{client?.nombre}</strong><small>{salon?.name} · {formatDate(reservation.fecha, 'd MMM')}</small></span><span className="chat-thread__right"><Badge tone={index === 0 ? 'success' : 'neutral'} dot>{index === 0 ? 'Nuevo' : 'Visto'}</Badge><small>10:24</small></span></button> })}</div><div className="workspace-card chat-empty-panel"><MessageCircle size={28} /><h2>Selecciona una conversación</h2><p>Los mensajes y archivos del chat aparecerán aquí cuando se conecte el servicio.</p><Button variant="secondary" pending icon={MessageCircle}>Abrir chat</Button></div></div></AnimatedPage>
 }
 
@@ -141,33 +151,142 @@ export function AdminUsersPage() {
 }
 
 export function AdminSalonsPage() {
-  const { data, createSalon, toggleSalon } = useApp()
+  const { data, createSalon, toggleSalon, notify } = useApp()
   const [open, setOpen] = useState(false)
-  const [fileName, setFileName] = useState('')
-  const [form, setForm] = useState({ name: '', location: '', capacity: '', basePrice: '' })
-  const submit = async (event) => { event.preventDefault(); const id = `salon_${Date.now()}`; await createSalon({ id, accent: '#8e7ab5', active: true, availableDates: [], basePrice: Number(form.basePrice), capacity: Number(form.capacity), description: 'Salón nuevo pendiente de descripción.', direccion: form.location, location: form.location, name: form.name, phone: '', photos: [], serviciosIds: [], type: 'Nuevo espacio', urlImagen: '', idPublicoCloudinary: '', ownerId: 'usr_dueno_01' }); setForm({ name: '', location: '', capacity: '', basePrice: '' }); setFileName(''); setOpen(false) }
-  const columns = [{ key: 'name', label: 'Salón', render: (row) => <span className="table-person"><img src={row.photos?.[0]} alt="" /><span><strong>{row.name}</strong><small>{getSalonLocation(row)}</small></span></span> }, { key: 'type', label: 'Tipo' }, { key: 'capacity', label: 'Capacidad', render: (row) => `${row.capacity} personas` }, { key: 'basePrice', label: 'Precio base', render: (row) => formatCurrency(row.basePrice) }, { key: 'active', label: 'Estado', render: (row) => <StatusBadge status={row.active ? 'activo' : 'inactivo'} /> }, { key: 'actions', label: '', render: (row) => <div className="table-actions"><button className="icon-button" type="button" title="Editar salón" onClick={() => alert('Edición de salón: pendiente de conexión')}><Pencil size={15} /></button><button className="icon-button" type="button" onClick={() => toggleSalon(row.id)} title={row.active ? 'Ocultar' : 'Publicar'}>{row.active ? <Eye size={15} /> : <Check size={15} />}</button></div> }]
-  return <AnimatedPage className="panel-page"><PanelIntro eyebrow="Catálogo" title="Gestión de salones" description="Administra espacios, precios, fotos y publicación." crumbs={[{ label: 'Admin', to: '/admin' }, { label: 'Salones' }]} actions={<Button icon={Plus} onClick={() => setOpen((value) => !value)}>Nuevo salón</Button>} />{open && <div className="workspace-card inline-form-card" data-reveal><div><span className="eyebrow">Alta de salón</span><h2>Agregar un nuevo espacio</h2><p>El formulario ya contempla los campos de Firestore y Cloudinary.</p></div><form className="inline-form inline-form--salon" onSubmit={submit}><input required placeholder="Nombre del salón" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /><input required placeholder="Ciudad / zona" value={form.location} onChange={(event) => setForm({ ...form, location: event.target.value })} /><input required type="number" min="1" placeholder="Capacidad" value={form.capacity} onChange={(event) => setForm({ ...form, capacity: event.target.value })} /><input required type="number" min="0" placeholder="Precio base" value={form.basePrice} onChange={(event) => setForm({ ...form, basePrice: event.target.value })} /><label className="upload-field"><ImagePlus size={16} />{fileName || 'Subir imagen'}<input type="file" accept="image/*" onChange={async (event) => { const file = event.target.files?.[0]; if (file) { const upload = await uploadSalonImage(file); setFileName(upload?.secure_url ? file.name : '') } }} /></label><Button type="submit" size="sm">Guardar salón</Button></form><InfoNote tone="lilac"><ImagePlus size={15} /> Cloudinary placeholder · cloud_name: {CLOUDINARY_CONFIG.cloudName} · upload_preset: {CLOUDINARY_CONFIG.uploadPreset}. {cloudinaryUploadNote}</InfoNote></div>}<div className="workspace-card"><Table columns={columns} rows={data.salones} /></div></AnimatedPage>
+  const [editingId, setEditingId] = useState(null)
+  const [uploading, setUploading] = useState(false)
+  const emptyForm = { name: '', type: '', location: '', direccion: '', phone: '', capacity: '', basePrice: '', description: '', duenoId: '', active: true, serviciosIds: [], urlImagen: '', idPublicoCloudinary: '' }
+  const [form, setForm] = useState(emptyForm)
+  const owners = data.usuarios.filter((user) => user.rol === 'dueno' && user.activo)
+  const update = (field) => (event) => setForm({ ...form, [field]: event.target.type === 'checkbox' ? event.target.checked : event.target.value })
+  const resetForm = () => { setForm(emptyForm); setEditingId(null); setOpen(false); setUploading(false) }
+  const startCreate = () => { setForm(emptyForm); setEditingId(null); setOpen(true) }
+  const startEdit = (salon) => {
+    setForm({
+      name: salon.name ?? '',
+      type: salon.type ?? '',
+      location: Array.isArray(salon.location) ? salon.location.join(', ') : salon.location ?? '',
+      direccion: salon.direccion ?? '',
+      phone: salon.phone ?? '',
+      capacity: salon.capacity ?? '',
+      basePrice: salon.basePrice ?? '',
+      description: salon.description ?? '',
+      duenoId: salon.duenoId ?? salon.ownerId ?? owners.find((owner) => owner.salonesIds?.includes(salon.id))?.id ?? '',
+      active: salon.active ?? true,
+      serviciosIds: salon.serviciosIds ?? [],
+      urlImagen: salon.urlImagen ?? salon.photos?.[0] ?? '',
+      idPublicoCloudinary: salon.idPublicoCloudinary ?? '',
+    })
+    setEditingId(salon.id)
+    setOpen(true)
+  }
+  const toggleServiceId = (serviceId) => setForm((current) => ({
+    ...current,
+    serviciosIds: current.serviciosIds.includes(serviceId)
+      ? current.serviciosIds.filter((id) => id !== serviceId)
+      : [...current.serviciosIds, serviceId],
+  }))
+  const uploadImage = async (event) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+    setUploading(true)
+    try {
+      const upload = await uploadSalonImage(file)
+      setForm((current) => ({ ...current, urlImagen: upload.secure_url, idPublicoCloudinary: upload.public_id }))
+      notify(upload.pending ? 'Imagen en preview local. Configura Cloudinary para subirla.' : 'Imagen subida a Cloudinary')
+    } catch (error) {
+      console.error('Cloudinary upload failed:', error)
+      notify('No se pudo subir la imagen a Cloudinary.', 'warning')
+    } finally {
+      setUploading(false)
+    }
+  }
+  const submit = async (event) => {
+    event.preventDefault()
+    const id = editingId ?? `salon_${Date.now()}`
+    await createSalon({
+      id,
+      accent: '#8e7ab5',
+      active: form.active,
+      availableDates: data.salones.find((salon) => salon.id === id)?.availableDates ?? [],
+      basePrice: Number(form.basePrice),
+      capacity: Number(form.capacity),
+      description: form.description.trim(),
+      direccion: form.direccion.trim(),
+      location: form.location.trim(),
+      name: form.name.trim(),
+      phone: form.phone.trim(),
+      photos: form.urlImagen ? [form.urlImagen] : [],
+      serviciosIds: form.serviciosIds,
+      type: form.type.trim(),
+      urlImagen: form.urlImagen,
+      idPublicoCloudinary: form.idPublicoCloudinary,
+      duenoId: form.duenoId,
+    })
+    resetForm()
+  }
+  const columns = [{ key: 'name', label: 'Salón', render: (row) => <span className="table-person"><img src={row.urlImagen || row.photos?.[0]} alt="" /><span><strong>{row.name}</strong><small>{getSalonLocation(row)}</small></span></span> }, { key: 'duenoId', label: 'Dueño', render: (row) => data.usuarios.find((user) => user.id === row.duenoId || user.salonesIds?.includes(row.id))?.nombre ?? 'Sin asignar' }, { key: 'type', label: 'Tipo' }, { key: 'capacity', label: 'Capacidad', render: (row) => `${row.capacity} personas` }, { key: 'basePrice', label: 'Precio base', render: (row) => formatCurrency(row.basePrice) }, { key: 'active', label: 'Estado', render: (row) => <StatusBadge status={row.active ? 'activo' : 'inactivo'} /> }, { key: 'actions', label: '', render: (row) => <div className="table-actions"><button className="icon-button" type="button" title="Editar salón" onClick={() => startEdit(row)}><Pencil size={15} /></button><button className="icon-button" type="button" onClick={() => toggleSalon(row.id)} title={row.active ? 'Ocultar' : 'Publicar'}>{row.active ? <Eye size={15} /> : <Check size={15} />}</button></div> }]
+  return <AnimatedPage className="panel-page"><PanelIntro eyebrow="Catálogo" title="Gestión de salones" description="Administra espacios, precios, fotos y publicación." crumbs={[{ label: 'Admin', to: '/admin' }, { label: 'Salones' }]} actions={<Button icon={Plus} onClick={startCreate}>Nuevo salón</Button>} />{open && <div className="workspace-card inline-form-card" data-reveal><div><span className="eyebrow">{editingId ? 'Editar salón' : 'Alta de salón'}</span><h2>{editingId ? 'Actualizar espacio' : 'Agregar un nuevo espacio'}</h2><p>El formulario guarda los campos de salones, asigna dueño con duenoId y usa Cloudinary para la imagen principal.</p></div><form className="inline-form inline-form--salon" onSubmit={submit}><input required placeholder="Nombre del salón" value={form.name} onChange={update('name')} /><input required placeholder="Tipo de salón" value={form.type} onChange={update('type')} /><input required placeholder="Ciudad / zona" value={form.location} onChange={update('location')} /><input required placeholder="Dirección completa" value={form.direccion} onChange={update('direccion')} /><input placeholder="Teléfono" value={form.phone} onChange={update('phone')} /><input required type="number" min="1" placeholder="Capacidad" value={form.capacity} onChange={update('capacity')} /><input required type="number" min="0" placeholder="Precio base" value={form.basePrice} onChange={update('basePrice')} /><select required value={form.duenoId} onChange={update('duenoId')}><option value="">Asignar dueño</option>{owners.map((owner) => <option value={owner.id} key={owner.id}>{owner.nombre}</option>)}</select><textarea required placeholder="Descripción" value={form.description} onChange={update('description')} /><div className="checkbox-grid">{data.servicios.map((service) => <label key={service.id}><input type="checkbox" checked={form.serviciosIds.includes(service.id)} onChange={() => toggleServiceId(service.id)} />{service.nombre}</label>)}</div><label className="toggle-line"><input type="checkbox" checked={form.active} onChange={update('active')} /> Publicado</label><label className="upload-field"><ImagePlus size={16} />{uploading ? 'Subiendo...' : 'Subir imagen'}<input type="file" accept="image/*" onChange={uploadImage} /></label>{form.urlImagen && <span className="form-preview"><img src={form.urlImagen} alt="Preview del salón" />Imagen principal lista</span>}<div className="form-actions"><Button type="submit" size="sm" disabled={uploading}>{editingId ? 'Guardar cambios' : 'Guardar salón'}</Button><Button type="button" variant="ghost" size="sm" onClick={resetForm}>Cancelar</Button></div></form><InfoNote tone="lilac"><ImagePlus size={15} /> Cloudinary · cloud_name: {CLOUDINARY_CONFIG.cloudName || 'pendiente'} · upload_preset: {CLOUDINARY_CONFIG.uploadPreset}. {cloudinaryUploadNote}</InfoNote></div>}<div className="workspace-card"><Table columns={columns} rows={data.salones} /></div></AnimatedPage>
 }
 
 export function AdminServicesPage() {
-  const { data, createService } = useApp()
-  const [name, setName] = useState('')
-  const [price, setPrice] = useState('')
-  const submit = async (event) => { event.preventDefault(); await createService({ activo: true, descripcion: 'Servicio nuevo pendiente de descripción.', idPublicoCloudinary: '', nombre: name, precio: Number(price), urlImagen: '' }); setName(''); setPrice('') }
-  const columns = [{ key: 'nombre', label: 'Servicio', render: (row) => <span className="table-person"><span className="service-table-icon"><Sparkles size={15} /></span><span><strong>{row.nombre}</strong><small>{row.descripcion}</small></span></span> }, { key: 'precio', label: 'Precio', render: (row) => formatCurrency(row.precio) }, { key: 'activo', label: 'Estado', render: (row) => <StatusBadge status={row.activo ? 'activo' : 'inactivo'} /> }, { key: 'actions', label: '', render: () => <button type="button" className="icon-button" title="Editar servicio" onClick={() => alert('Edición de servicio: pendiente de conexión')}><Pencil size={15} /></button> }]
-  return <AnimatedPage className="panel-page"><PanelIntro eyebrow="Catálogo" title="Gestión de servicios" description="Crea extras que los clientes pueden sumar a su reservación." crumbs={[{ label: 'Admin', to: '/admin' }, { label: 'Servicios' }]} /><div className="workspace-card quick-create"><div><span className="eyebrow">Nuevo servicio</span><h2>Sumar una opción</h2><p>El precio se guarda en pesos mexicanos.</p></div><form className="inline-form" onSubmit={submit}><input required placeholder="Nombre del servicio" value={name} onChange={(event) => setName(event.target.value)} /><input required min="0" type="number" placeholder="Precio" value={price} onChange={(event) => setPrice(event.target.value)} /><Button type="submit" icon={Plus}>Agregar</Button></form></div><div className="workspace-card"><Table columns={columns} rows={data.servicios} /></div></AnimatedPage>
+  const { data, createService, toggleServiceActive } = useApp()
+  const emptyForm = { id: '', nombre: '', descripcion: '', precio: '', urlImagen: '', idPublicoCloudinary: '', activo: true }
+  const [form, setForm] = useState(emptyForm)
+  const editing = Boolean(form.id)
+  const update = (field) => (event) => setForm({ ...form, [field]: event.target.type === 'checkbox' ? event.target.checked : event.target.value })
+  const editService = (service) => setForm({
+    id: service.id,
+    nombre: service.nombre ?? '',
+    descripcion: service.descripcion ?? '',
+    precio: service.precio ?? '',
+    urlImagen: service.urlImagen ?? '',
+    idPublicoCloudinary: service.idPublicoCloudinary ?? '',
+    activo: service.activo ?? true,
+  })
+  const submit = async (event) => {
+    event.preventDefault()
+    await createService({
+      ...form,
+      precio: Number(form.precio),
+      nombre: form.nombre.trim(),
+      descripcion: form.descripcion.trim(),
+      urlImagen: form.urlImagen.trim(),
+      idPublicoCloudinary: form.idPublicoCloudinary.trim(),
+    })
+    setForm(emptyForm)
+  }
+  const columns = [{ key: 'nombre', label: 'Servicio', render: (row) => <span className="table-person">{row.urlImagen ? <img src={row.urlImagen} alt="" /> : <span className="service-table-icon"><Sparkles size={15} /></span>}<span><strong>{row.nombre}</strong><small>{row.descripcion}</small></span></span> }, { key: 'precio', label: 'Precio', render: (row) => formatCurrency(row.precio) }, { key: 'activo', label: 'Estado', render: (row) => <StatusBadge status={row.activo ? 'activo' : 'inactivo'} /> }, { key: 'actions', label: '', render: (row) => <div className="table-actions"><button type="button" className="icon-button" title="Editar servicio" onClick={() => editService(row)}><Pencil size={15} /></button><button type="button" className="icon-button" title={row.activo ? 'Desactivar' : 'Activar'} onClick={() => toggleServiceActive(row.id)}>{row.activo ? <Trash2 size={15} /> : <Check size={15} />}</button></div> }]
+  return <AnimatedPage className="panel-page"><PanelIntro eyebrow="Catálogo" title="Gestión de servicios" description="Crea extras que los clientes pueden sumar a su reservación." crumbs={[{ label: 'Admin', to: '/admin' }, { label: 'Servicios' }]} /><div className="workspace-card quick-create"><div><span className="eyebrow">{editing ? 'Editar servicio' : 'Nuevo servicio'}</span><h2>{editing ? 'Actualizar opción' : 'Sumar una opción'}</h2><p>El precio se guarda en pesos mexicanos y sólo los servicios activos aparecen al reservar.</p></div><form className="inline-form service-form" onSubmit={submit}><input required placeholder="Nombre del servicio" value={form.nombre} onChange={update('nombre')} /><input required min="0" type="number" placeholder="Precio" value={form.precio} onChange={update('precio')} /><input placeholder="URL de imagen" value={form.urlImagen} onChange={update('urlImagen')} /><input placeholder="Public ID Cloudinary" value={form.idPublicoCloudinary} onChange={update('idPublicoCloudinary')} /><textarea required placeholder="Descripción" value={form.descripcion} onChange={update('descripcion')} /><label className="toggle-line"><input type="checkbox" checked={form.activo} onChange={update('activo')} /> Activo</label><div className="form-actions"><Button type="submit" icon={Plus}>{editing ? 'Guardar cambios' : 'Agregar'}</Button>{editing && <Button type="button" variant="ghost" onClick={() => setForm(emptyForm)}>Cancelar</Button>}</div></form></div><div className="workspace-card"><Table columns={columns} rows={data.servicios} /></div></AnimatedPage>
 }
 
 export function AdminAvailabilityPage() {
-  const { data, updateAvailability } = useApp()
-  const columns = [{ key: 'fecha', label: 'Fecha', render: (row) => <strong>{formatDate(row.fecha, 'd MMM yyyy')}</strong> }, { key: 'salon', label: 'Salón', render: (row) => data.salones.filter((salon) => row.salonesIds.includes(salon.id)).map((salon) => salon.name).join(', ') }, { key: 'precio', label: 'Precio', render: (row) => formatCurrency(row.precio) }, { key: 'estado', label: 'Estado', render: (row) => <select className="status-select" value={row.estado} onChange={(event) => updateAvailability(row.id, event.target.value)}><option value="disponible">disponible</option><option value="reservado">reservado</option><option value="bloqueado">bloqueado</option></select> }, { key: 'actions', label: '', render: () => <button className="icon-button" type="button" title="Ver detalle" onClick={() => alert('Detalle de disponibilidad: pendiente de conexión')}><Eye size={15} /></button> }]
-  return <AnimatedPage className="panel-page"><PanelIntro eyebrow="Calendario" title="Gestión de disponibilidad" description="Define qué fechas pueden reservarse y bajo qué precio." crumbs={[{ label: 'Admin', to: '/admin' }, { label: 'Disponibilidad' }]} actions={<Button variant="secondary" icon={Plus} onClick={() => alert('Crear fecha: pendiente de conexión')}>Nueva fecha</Button>} /><div className="workspace-card"><div className="table-toolbar"><div className="table-toolbar__filters"><button type="button" className="toolbar-chip toolbar-chip--active"><CalendarDays size={14} /> Todas las fechas</button><button type="button" className="toolbar-chip">Disponibles</button><button type="button" className="toolbar-chip">Bloqueadas</button></div><span className="table-date-note"><CalendarDays size={14} /> Agosto — Septiembre 2026</span></div><Table columns={columns} rows={data.disponibilidad} /></div><InfoNote tone="lilac"><CalendarDays size={15} /> La disponibilidad también se podrá consultar desde la colección disponibilidad usando salonesIds como array.</InfoNote></AnimatedPage>
+  const { data, createAvailability, updateAvailability } = useApp()
+  const [open, setOpen] = useState(false)
+  const [filter, setFilter] = useState('todas')
+  const [form, setForm] = useState({ salonId: data.salones[0]?.id ?? '', fecha: '', precio: '', estado: 'disponible' })
+  const selectedSalon = data.salones.find((salon) => salon.id === form.salonId)
+  const submit = async (event) => {
+    event.preventDefault()
+    await createAvailability({
+      estado: form.estado,
+      fecha: form.fecha,
+      precio: Number(form.precio || selectedSalon?.basePrice || 0),
+      salonesIds: [form.salonId],
+    })
+    setForm({ salonId: data.salones[0]?.id ?? '', fecha: '', precio: '', estado: 'disponible' })
+    setOpen(false)
+  }
+  const rows = data.disponibilidad
+    .filter((item) => filter === 'todas' || item.estado === filter)
+    .sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)))
+  const columns = [{ key: 'fecha', label: 'Fecha', render: (row) => <strong>{formatDate(row.fecha, 'd MMM yyyy')}</strong> }, { key: 'salon', label: 'Salón', render: (row) => data.salones.filter((salon) => row.salonesIds.includes(salon.id)).map((salon) => salon.name).join(', ') }, { key: 'precio', label: 'Precio', render: (row) => formatCurrency(row.precio) }, { key: 'estado', label: 'Estado', render: (row) => <select className="status-select" value={row.estado} onChange={(event) => updateAvailability(row.id, event.target.value)}><option value="disponible">disponible</option><option value="reservada">reservada</option><option value="bloqueada">bloqueada</option></select> }, { key: 'actions', label: '', render: (row) => <button className="icon-button" type="button" title="Bloquear fecha" onClick={() => updateAvailability(row.id, 'bloqueada')}><Eye size={15} /></button> }]
+  return <AnimatedPage className="panel-page"><PanelIntro eyebrow="Calendario" title="Gestión de disponibilidad" description="Define qué fechas pueden reservarse y bajo qué precio." crumbs={[{ label: 'Admin', to: '/admin' }, { label: 'Disponibilidad' }]} actions={<Button variant="secondary" icon={Plus} onClick={() => setOpen((value) => !value)}>Nueva fecha</Button>} />{open && <div className="workspace-card inline-form-card" data-reveal><div><span className="eyebrow">Nueva disponibilidad</span><h2>Crear fecha reservable</h2><p>La fecha se guarda en disponibilidad con salonesIds como array.</p></div><form className="inline-form" onSubmit={submit}><select required value={form.salonId} onChange={(event) => setForm({ ...form, salonId: event.target.value, precio: data.salones.find((salon) => salon.id === event.target.value)?.basePrice ?? form.precio })}>{data.salones.map((salon) => <option key={salon.id} value={salon.id}>{salon.name}</option>)}</select><input required type="date" value={form.fecha} onChange={(event) => setForm({ ...form, fecha: event.target.value })} /><input type="number" min="0" placeholder={`Precio sugerido ${formatCurrency(selectedSalon?.basePrice ?? 0)}`} value={form.precio} onChange={(event) => setForm({ ...form, precio: event.target.value })} /><select value={form.estado} onChange={(event) => setForm({ ...form, estado: event.target.value })}><option value="disponible">disponible</option><option value="reservada">reservada</option><option value="bloqueada">bloqueada</option></select><Button type="submit" size="sm">Guardar fecha</Button></form></div>}<div className="workspace-card"><div className="table-toolbar"><div className="table-toolbar__filters">{['todas', 'disponible', 'reservada', 'bloqueada'].map((state) => <button type="button" key={state} className={clsx('toolbar-chip', filter === state && 'toolbar-chip--active')} onClick={() => setFilter(state)}><CalendarDays size={14} /> {state === 'todas' ? 'Todas las fechas' : state}</button>)}</div><span className="table-date-note"><CalendarDays size={14} /> Fechas desde Firestore</span></div><Table columns={columns} rows={rows} /></div><InfoNote tone="lilac"><CalendarDays size={15} /> Los clientes sólo pueden reservar fechas en estado disponible. Al reservar, la fecha cambia a reservada.</InfoNote></AnimatedPage>
 }
 
 export function AdminReservationsPage() {
-  const { data } = useApp()
-  const columns = [{ key: 'id', label: 'ID', render: (row) => <code className="id-code">{row.id}</code> }, { key: 'salon', label: 'Salón', render: (row) => data.salones.find((salon) => row.salonesIds.includes(salon.id))?.name }, { key: 'cliente', label: 'Cliente', render: (row) => data.usuarios.find((user) => user.id === row.clienteId)?.nombre }, { key: 'fecha', label: 'Fecha', render: (row) => formatDate(row.fecha, 'd MMM yyyy') }, { key: 'estadoPago', label: 'Pago', render: (row) => <StatusBadge status={row.estadoPago} /> }, { key: 'total', label: 'Total', render: (row) => <strong>{formatCurrency(row.total)}</strong> }]
+  const { data, updateReservationStatus } = useApp()
+  const columns = [{ key: 'id', label: 'ID', render: (row) => <code className="id-code">{row.id}</code> }, { key: 'salon', label: 'Salón', render: (row) => data.salones.find((salon) => row.salonesIds.includes(salon.id))?.name }, { key: 'cliente', label: 'Cliente', render: (row) => data.usuarios.find((user) => user.id === row.clienteId)?.nombre }, { key: 'fecha', label: 'Fecha', render: (row) => formatDate(row.fecha, 'd MMM yyyy') }, { key: 'estadoReservacion', label: 'Reservación', render: (row) => <select className="status-select" value={row.estadoReservacion} onChange={(event) => updateReservationStatus(row.id, event.target.value)}><option value="pendiente">pendiente</option><option value="por confirmar">por confirmar</option><option value="confirmada">confirmada</option><option value="cancelada">cancelada</option></select> }, { key: 'estadoPago', label: 'Pago', render: (row) => <StatusBadge status={row.estadoPago} /> }, { key: 'total', label: 'Total', render: (row) => <strong>{formatCurrency(row.total)}</strong> }]
   return <AnimatedPage className="panel-page"><PanelIntro eyebrow="Operación" title="Gestión de reservaciones" description="Consulta, filtra y da seguimiento a cada solicitud." crumbs={[{ label: 'Admin', to: '/admin' }, { label: 'Reservaciones' }]} actions={<Button variant="secondary" icon={Download} onClick={() => alert('Exportación de reservaciones pendiente de conexión')}>Exportar</Button>} /><div className="workspace-card"><div className="table-toolbar"><div className="listing-search"><Search size={16} /><input placeholder="Buscar por ID, cliente o salón" /></div><button className="toolbar-chip" type="button"><Filter size={14} /> Filtros <ChevronDown size={13} /></button></div><Table columns={columns} rows={data.reservaciones} /></div></AnimatedPage>
 }
 

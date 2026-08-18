@@ -3,14 +3,18 @@ import { addDays, format } from 'date-fns'
 import { es } from 'date-fns/locale'
 import {
   actualizarDisponibilidad,
+  actualizarReservacion,
   actualizarSalon,
+  actualizarServicio,
   actualizarUsuario,
+  crearDisponibilidad,
   crearPago,
   crearReservacion,
   crearSalon,
   crearServicio,
   crearUsuario,
   getDatabaseSnapshot,
+  mergeAvailabilityIntoSalons,
 } from '../services/firestoreService'
 import { cloneMockDatabase } from '../data/mockData'
 import { firebaseConfigured } from '../services/firebaseClient'
@@ -35,6 +39,19 @@ const mockPasswords = {
 }
 
 const getInitialDate = () => format(addDays(new Date(), 7), 'yyyy-MM-dd')
+
+const syncSalonAvailability = (nextData) => ({
+  ...nextData,
+  salones: mergeAvailabilityIntoSalons(nextData.salones, nextData.disponibilidad),
+})
+
+const findAvailabilityForSalonDate = (records, salonId, date) => records.find((item) => (
+  item.fecha === date && item.salonesIds?.includes(salonId)
+))
+
+const findSalonOwner = (usuarios, salon) => usuarios.find((user) => (
+  user.rol === 'dueno' && (user.id === salon?.duenoId || user.id === salon?.ownerId || user.salonesIds?.includes(salon?.id))
+))
 
 const getAuthErrorMessage = (error) => {
   const messages = {
@@ -64,7 +81,7 @@ export function AppProvider({ children }) {
     window.setTimeout(() => setToast(null), 3200)
   }
 
-  const refreshData = (nextData) => setData(nextData)
+  const refreshData = (nextData) => setData(syncSalonAvailability(nextData))
 
   useEffect(() => {
     if (!firebaseConfigured) return undefined
@@ -216,7 +233,6 @@ export function AppProvider({ children }) {
       nombre: nombre.trim(),
       rol: 'cliente',
       telefono: telefono.trim(),
-      salonesIds: [],
     })
     mockPasswords[normalizedEmail] = password
     refreshData({ ...data, usuarios: [...data.usuarios, created] })
@@ -242,6 +258,19 @@ export function AppProvider({ children }) {
     return created
   }
 
+  const updateClientProfile = async (updates) => {
+    if (!currentUser?.id) return { ok: false, message: 'Inicia sesión para editar tu perfil.' }
+    const updated = await actualizarUsuario(currentUser.id, {
+      nombre: updates.nombre.trim(),
+      telefono: updates.telefono.trim(),
+      correo: updates.correo.trim().toLowerCase(),
+    })
+    refreshData({ ...data, usuarios: data.usuarios.map((item) => item.id === currentUser.id ? updated : item) })
+    setCurrentUser(updated)
+    notify('Perfil actualizado')
+    return { ok: true, user: updated }
+  }
+
   const toggleUser = async (id) => {
     const user = data.usuarios.find((item) => item.id === id)
     if (!user) return
@@ -250,10 +279,36 @@ export function AppProvider({ children }) {
     notify(updated.activo ? 'Usuario activado' : 'Usuario desactivado', 'info')
   }
 
+  const syncOwnerSalonIds = async (salonId, duenoId) => {
+    const owners = data.usuarios.filter((user) => user.rol === 'dueno')
+    const syncedOwners = await Promise.all(owners.map(async (owner) => {
+      const currentIds = owner.salonesIds ?? []
+      const shouldOwn = owner.id === duenoId
+      const alreadyOwns = currentIds.includes(salonId)
+      if (shouldOwn === alreadyOwns) return owner
+      const salonesIds = shouldOwn
+        ? [...currentIds, salonId]
+        : currentIds.filter((id) => id !== salonId)
+      return actualizarUsuario(owner.id, { salonesIds })
+    }))
+    return data.usuarios.map((user) => syncedOwners.find((owner) => owner.id === user.id) ?? user)
+  }
+
   const createSalon = async (salonData) => {
     const exists = data.salones.some((salon) => salon.id === salonData.id)
-    const created = exists ? await actualizarSalon(salonData.id, salonData) : await crearSalon(salonData)
-    refreshData({ ...data, salones: exists ? data.salones.map((salon) => salon.id === salonData.id ? created : salon) : [...data.salones, created] })
+    const normalized = {
+      ...salonData,
+      photos: salonData.photos?.length ? salonData.photos : (salonData.urlImagen ? [salonData.urlImagen] : []),
+    }
+    const created = exists ? await actualizarSalon(normalized.id, normalized) : await crearSalon(normalized)
+    let usuarios = data.usuarios
+    try {
+      usuarios = await syncOwnerSalonIds(created.id, created.duenoId)
+    } catch (error) {
+      console.error('No se pudo sincronizar usuarios.salonesIds:', error)
+      notify('Salón guardado, pero no se pudo sincronizar salonesIds del dueño.', 'warning')
+    }
+    refreshData({ ...data, usuarios, salones: exists ? data.salones.map((salon) => salon.id === created.id ? created : salon) : [...data.salones, created] })
     notify(firebaseConfigured ? (exists ? 'Salón actualizado en Firebase' : 'Salón creado en Firebase') : (exists ? 'Salón actualizado en la capa mock' : 'Salón preparado en la capa mock'))
     return created
   }
@@ -267,16 +322,44 @@ export function AppProvider({ children }) {
   }
 
   const createService = async (serviceData) => {
-    const created = await crearServicio(serviceData)
-    refreshData({ ...data, servicios: [...data.servicios, created] })
-    notify(firebaseConfigured ? 'Servicio agregado en Firebase' : 'Servicio agregado en la capa mock')
+    const payload = { ...serviceData }
+    if (!payload.id) delete payload.id
+    const exists = payload.id && data.servicios.some((service) => service.id === payload.id)
+    const saved = exists ? await actualizarServicio(payload.id, payload) : await crearServicio(payload)
+    refreshData({ ...data, servicios: exists ? data.servicios.map((service) => service.id === saved.id ? saved : service) : [...data.servicios, saved] })
+    notify(firebaseConfigured ? (exists ? 'Servicio actualizado en Firebase' : 'Servicio agregado en Firebase') : (exists ? 'Servicio actualizado en la capa mock' : 'Servicio agregado en la capa mock'))
+    return saved
+  }
+
+  const toggleServiceActive = async (id) => {
+    const service = data.servicios.find((item) => item.id === id)
+    if (!service) return null
+    const updated = await actualizarServicio(id, { activo: !service.activo })
+    refreshData({ ...data, servicios: data.servicios.map((item) => item.id === id ? updated : item) })
+    notify(updated.activo ? 'Servicio activado' : 'Servicio desactivado', 'info')
+    return updated
+  }
+
+  const createAvailability = async (availabilityData) => {
+    const created = await crearDisponibilidad(availabilityData)
+    refreshData({ ...data, disponibilidad: [...data.disponibilidad, created] })
+    notify(firebaseConfigured ? 'Disponibilidad creada en Firebase' : 'Disponibilidad creada en la capa mock')
     return created
   }
 
-  const updateAvailability = async (id, estado) => {
-    const updated = await actualizarDisponibilidad(id, { estado })
+  const updateAvailability = async (id, updates) => {
+    const payload = typeof updates === 'string' ? { estado: updates } : updates
+    const updated = await actualizarDisponibilidad(id, payload)
     refreshData({ ...data, disponibilidad: data.disponibilidad.map((item) => item.id === id ? updated : item) })
-    notify(`Disponibilidad marcada como ${estado}`, 'info')
+    notify(`Disponibilidad marcada como ${updated.estado}`, 'info')
+    return updated
+  }
+
+  const updateReservationStatus = async (id, estadoReservacion) => {
+    const updated = await actualizarReservacion(id, { estadoReservacion })
+    refreshData({ ...data, reservaciones: data.reservaciones.map((item) => item.id === id ? updated : item) })
+    notify(`Reservación marcada como ${estadoReservacion}`, 'info')
+    return updated
   }
 
   const selectSalon = (salonId) => setBookingDraft((draft) => ({ ...draft, salonId }))
@@ -290,13 +373,26 @@ export function AppProvider({ children }) {
 
   const createReservation = async () => {
     const salon = data.salones.find((item) => item.id === bookingDraft.salonId)
+    if (!currentUser) return { ok: false, message: 'Inicia sesión como cliente para crear la reservación.' }
+    if (!salon) return { ok: false, message: 'Selecciona un salón válido.' }
+
+    const salonAvailability = data.disponibilidad.filter((item) => item.salonesIds?.includes(salon.id))
+    const selectedAvailability = findAvailabilityForSalonDate(data.disponibilidad, salon.id, bookingDraft.date)
+    if (selectedAvailability && selectedAvailability.estado !== 'disponible') {
+      return { ok: false, message: `La fecha seleccionada está ${selectedAvailability.estado}. Elige otra fecha.` }
+    }
+    if (salonAvailability.length && !selectedAvailability) {
+      return { ok: false, message: 'Selecciona una fecha disponible para este salón.' }
+    }
+
     const services = data.servicios.filter((service) => bookingDraft.servicesIds.includes(service.id))
     const totalServices = services.reduce((total, service) => total + service.precio, 0)
-    const owner = data.usuarios.find((user) => user.salonesIds?.includes(salon?.id) || user.id === salon?.ownerId)
-    const salonIds = salon ? [salon.id] : []
+    const owner = findSalonOwner(data.usuarios, salon)
+    const priceSalon = selectedAvailability?.precio ?? salon.basePrice ?? 0
+    const salonIds = [salon.id]
     const reservation = await crearReservacion({
-      clienteId: currentUser?.id ?? 'usr_cliente_01',
-      duenoId: owner ? [owner.id] : [],
+      clienteId: currentUser.id,
+      duenoId: owner?.id ?? salon.duenoId ?? '',
       estadoPago: 'pendiente',
       estadoReservacion: 'pendiente',
       fecha: bookingDraft.date,
@@ -304,14 +400,14 @@ export function AppProvider({ children }) {
       identificadorChat: null,
       identificadorPagoStripe: null,
       identificadorSalaVideo: null,
-      precioSalon: salon?.basePrice ?? 0,
+      precioSalon: priceSalon,
       salonesIds: salonIds,
       serviciosIds: bookingDraft.servicesIds,
-      total: (salon?.basePrice ?? 0) + totalServices,
+      total: priceSalon + totalServices,
       totalServicios: totalServices,
     })
     const payment = await crearPago({
-      clienteId: currentUser?.id ?? 'usr_cliente_01',
+      clienteId: currentUser.id,
       estadoPago: 'pendiente',
       fechaCreacion: format(new Date(), 'yyyy-MM-dd'),
       fechaPago: null,
@@ -322,9 +418,14 @@ export function AppProvider({ children }) {
       salonesIds: salonIds,
       tipoPago: 'total',
     })
-    refreshData({ ...data, reservaciones: [...data.reservaciones, reservation], pagos: [...data.pagos, payment] })
+    let disponibilidad = data.disponibilidad
+    if (selectedAvailability) {
+      const updatedAvailability = await actualizarDisponibilidad(selectedAvailability.id, { estado: 'reservada' })
+      disponibilidad = data.disponibilidad.map((item) => item.id === selectedAvailability.id ? updatedAvailability : item)
+    }
+    refreshData({ ...data, disponibilidad, reservaciones: [...data.reservaciones, reservation], pagos: [...data.pagos, payment] })
     notify('Reservación creada. El pago queda pendiente de conexión.')
-    return reservation
+    return { ok: true, reservation }
   }
 
   const value = {
@@ -345,10 +446,14 @@ export function AppProvider({ children }) {
     logout,
     createUser,
     toggleUser,
+    updateClientProfile,
     createSalon,
     toggleSalon,
     createService,
+    toggleServiceActive,
+    createAvailability,
     updateAvailability,
+    updateReservationStatus,
     selectSalon,
     selectDate,
     toggleService,
