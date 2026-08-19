@@ -7,7 +7,15 @@ import { applicationDefault, cert, getApps, initializeApp } from 'firebase-admin
 import { getAuth } from 'firebase-admin/auth'
 import { getFirestore, Timestamp } from 'firebase-admin/firestore'
 
-dotenv.config({ path: '.env.local' })
+dotenv.config()
+dotenv.config({ path: '.env.local', override: true })
+
+const LOCAL_FRONTEND_URL = 'http://localhost:5173'
+const normalizeOrigin = (origin = '') => origin.trim().replace(/\/$/, '')
+const parseOriginList = (value) => String(value || '')
+  .split(',')
+  .map(normalizeOrigin)
+  .filter(Boolean)
 
 const requiredEnvironment = ['STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET']
 const missingEnvironment = requiredEnvironment.filter((name) => !process.env[name])
@@ -19,9 +27,16 @@ if (missingEnvironment.length) {
 }
 
 const parseServiceAccount = () => {
-  if (process.env.GOOGLE_APPLICATION_CREDENTIALS) return null
-  if (!process.env.FIREBASE_SERVICE_ACCOUNT) return null
-  const account = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT)
+  const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON || process.env.FIREBASE_SERVICE_ACCOUNT
+  if (!serviceAccountJson) return null
+
+  let account
+  try {
+    account = JSON.parse(serviceAccountJson)
+  } catch {
+    throw new Error('FIREBASE_SERVICE_ACCOUNT_JSON debe contener un JSON valido de cuenta de servicio.')
+  }
+
   if (account.private_key) account.private_key = account.private_key.replace(/\\n/g, '\n')
   return account
 }
@@ -38,11 +53,14 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY)
 const db = getFirestore()
 const app = express()
 const port = Number(process.env.PORT) || 4242
-const normalizeOrigin = (origin = '') => origin.trim().replace(/\/$/, '')
-const allowedOrigins = (process.env.APP_URL || 'http://localhost:5173')
-  .split(',')
-  .map(normalizeOrigin)
-  .filter(Boolean)
+const appUrls = parseOriginList(process.env.APP_URL || LOCAL_FRONTEND_URL)
+const appUrl = appUrls[0] || LOCAL_FRONTEND_URL
+const allowedOrigins = [
+  LOCAL_FRONTEND_URL,
+  'http://127.0.0.1:5173',
+  ...appUrls,
+  ...parseOriginList(process.env.CORS_ORIGINS),
+].filter((origin, index, origins) => origin && origins.indexOf(origin) === index)
 
 const isLocalDevOrigin = (origin) => {
   if (process.env.NODE_ENV === 'production' || !origin) return false
@@ -57,10 +75,7 @@ const isAllowedOrigin = (origin) => {
   const normalizedOrigin = normalizeOrigin(origin)
   return !normalizedOrigin || allowedOrigins.includes(normalizedOrigin) || isLocalDevOrigin(normalizedOrigin)
 }
-const getAppUrl = (origin) => {
-  const normalizedOrigin = normalizeOrigin(origin)
-  return normalizedOrigin && isAllowedOrigin(normalizedOrigin) ? normalizedOrigin : allowedOrigins[0]
-}
+const getAppUrl = () => appUrl
 const asDateOnly = (value) => typeof value === 'string' ? value : value?.toDate?.().toISOString().slice(0, 10)
 const TERMS_VERSION = '2026-08-18'
 
@@ -465,7 +480,7 @@ app.post('/stripe/checkout-session', authenticate, async (request, response) => 
     if (!reservationId && (termsAccepted !== true || termsVersion !== TERMS_VERSION)) {
       return response.status(400).json({ error: 'Debes aceptar los términos antes de reservar.' })
     }
-    const appUrl = getAppUrl(request.headers.origin)
+    const appUrl = getAppUrl()
     let reservationReference
     let paymentReference
     let amount

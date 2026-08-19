@@ -1,4 +1,4 @@
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'https://medialuna-backend.onrender.com'
+import { BACKEND_URL } from './backendConfig'
 
 /**
  * Solicita a tu backend en Render un token de Stream Chat para el usuario actual.

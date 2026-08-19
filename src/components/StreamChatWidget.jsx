@@ -4,7 +4,6 @@ import { AlertCircle, Loader2, MessageCircle, Send } from 'lucide-react'
 import { createStreamChannel, getStreamToken } from '../services/backendService'
 
 export function StreamChatWidget({ reservation, currentUser, counterpartName, counterpartRole }) {
-  const [client, setClient] = useState(null)
   const [channel, setChannel] = useState(null)
   const [messages, setMessages] = useState([])
   const [inputText, setInputText] = useState('')
@@ -29,11 +28,7 @@ export function StreamChatWidget({ reservation, currentUser, counterpartName, co
   }, [messages])
 
   useEffect(() => {
-    if (!currentUser || !isParticipant) {
-      setLoading(false)
-      setError('Acceso denegado: Solo el cliente o el dueño de la reservación pueden ver el chat.')
-      return
-    }
+    if (!currentUser?.id || !isParticipant) return
 
     let isMounted = true
     let chatClient = null
@@ -76,7 +71,6 @@ export function StreamChatWidget({ reservation, currentUser, counterpartName, co
 
         if (!isMounted) return
 
-        setClient(chatClient)
         setChannel(targetChannel)
         setMessages(targetChannel.state.messages || [])
 
@@ -104,7 +98,7 @@ export function StreamChatWidget({ reservation, currentUser, counterpartName, co
         chatClient.disconnectUser().catch((err) => console.error('Error desconectando Stream user:', err))
       }
     }
-  }, [reservation.id, channelId, currentUser?.id])
+  }, [channelId, clientId, currentUser?.id, currentUser?.nombre, isParticipant, ownerId, reservation.fecha, reservation.id])
 
   const handleSendMessage = async (e) => {
     e.preventDefault()
@@ -161,11 +155,11 @@ export function StreamChatWidget({ reservation, currentUser, counterpartName, co
           </div>
         ) : (
           <div className="chat-messages-list">
-            {messages.map((msg) => {
+            {messages.map((msg, index) => {
               const isMe = msg.user?.id === currentUser?.id?.replace(/[^a-zA-Z0-9@_-]/g, '_')
               return (
                 <div
-                  key={msg.id || Math.random()}
+                  key={msg.id || `${msg.created_at || 'message'}-${index}`}
                   className={`chat-bubble ${isMe ? 'chat-bubble--me' : 'chat-bubble--owner'}`}
                 >
                   <div className="chat-bubble__text">{msg.text}</div>

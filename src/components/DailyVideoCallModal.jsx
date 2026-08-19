@@ -26,6 +26,8 @@ export function DailyVideoCallModal({ reservation, currentUser, onClose, onCallS
   const [callStatus, setCallStatus] = useState('conectando')
 
   const containerRef = useRef(null)
+  const onCloseRef = useRef(onClose)
+  const onCallStateChangeRef = useRef(onCallStateChange)
 
   const ownerId = Array.isArray(reservation.duenoId) ? reservation.duenoId[0] : (reservation.duenoId || '')
   const clientId = reservation.clienteId
@@ -41,11 +43,12 @@ export function DailyVideoCallModal({ reservation, currentUser, onClose, onCallS
   const roomName = storedRoomName && storedRoomName !== 'pendiente' ? storedRoomName : `video-res-${reservation.id}`
 
   useEffect(() => {
-    if (!isParticipant) {
-      setLoading(false)
-      setError('Acceso denegado: Solo el cliente y el dueño de esta reservación pueden ingresar a la videollamada.')
-      return
-    }
+    onCloseRef.current = onClose
+    onCallStateChangeRef.current = onCallStateChange
+  }, [onClose, onCallStateChange])
+
+  useEffect(() => {
+    if (!isParticipant) return
 
     let dailyCall = null
     let isMounted = true
@@ -90,15 +93,15 @@ export function DailyVideoCallModal({ reservation, currentUser, onClose, onCallS
           if (isMounted) {
             setLoading(false)
             setCallStatus('en_curso')
-            if (onCallStateChange) onCallStateChange('en_curso')
+            if (onCallStateChangeRef.current) onCallStateChangeRef.current('en_curso')
           }
         })
 
         dailyCall.on('left-meeting', () => {
           if (isMounted) {
             setCallStatus('finalizada')
-            if (onCallStateChange) onCallStateChange('finalizada')
-            onClose()
+            if (onCallStateChangeRef.current) onCallStateChangeRef.current('finalizada')
+            onCloseRef.current()
           }
         })
 
@@ -132,7 +135,7 @@ export function DailyVideoCallModal({ reservation, currentUser, onClose, onCallS
         dailyCall.destroy().catch((err) => console.error('Error al destruir DailyCall:', err))
       }
     }
-  }, [reservation.id, roomName, currentUser?.id])
+  }, [currentUser?.id, currentUser?.nombre, isParticipant, roomName])
 
   const toggleAudio = () => {
     if (!callObject) return

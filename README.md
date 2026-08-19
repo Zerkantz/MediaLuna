@@ -15,7 +15,16 @@ En otra terminal inicia el backend:
 npm run server
 ```
 
-La conexión web usa las variables de `.env.local` con los nombres `VITE_FIREBASE_API_KEY`, `VITE_FIREBASE_AUTH_DOMAIN`, `VITE_FIREBASE_PROJECT_ID`, `VITE_FIREBASE_STORAGE_BUCKET`, `VITE_FIREBASE_MESSAGING_SENDER_ID` y `VITE_FIREBASE_APP_ID`. Después de cambiar ese archivo, reinicia Vite.
+La conexión web usa las variables de `.env.local` con los nombres `VITE_FIREBASE_API_KEY`, `VITE_FIREBASE_AUTH_DOMAIN`, `VITE_FIREBASE_PROJECT_ID`, `VITE_FIREBASE_STORAGE_BUCKET`, `VITE_FIREBASE_MESSAGING_SENDER_ID`, `VITE_FIREBASE_APP_ID`, `VITE_CLOUDINARY_CLOUD_NAME`, `VITE_CLOUDINARY_UPLOAD_PRESET`, `VITE_BACKEND_URL` y `VITE_STRIPE_BACKEND_URL`. Después de cambiar ese archivo, reinicia Vite.
+
+Para desarrollo local:
+
+```bash
+VITE_BACKEND_URL=http://localhost:4242
+VITE_STRIPE_BACKEND_URL=http://localhost:4242
+APP_URL=http://localhost:5173
+PORT=4242
+```
 
 Para validar producción:
 
@@ -59,7 +68,7 @@ Los botones de chat, llamada, videollamada, cambios de contraseña y algunas exp
 
 1. Copia las variables de `.env.example` a `.env.local` y conserva las variables Firebase web existentes.
 2. Obtén `STRIPE_SECRET_KEY` desde Developers > API keys en el Dashboard de Stripe. Usa primero una clave `sk_test_...`.
-3. Crea una cuenta de servicio en Firebase Console > Configuración del proyecto > Cuentas de servicio > Generar nueva clave privada. Guarda el JSON fuera del repositorio, elimina `FIREBASE_SERVICE_ACCOUNT` si existe y configura su ruta, por ejemplo `GOOGLE_APPLICATION_CREDENTIALS=C:/Users/tu_usuario/Downloads/firebase-service-account.json`.
+3. Crea una cuenta de servicio en Firebase Console > Configuración del proyecto > Cuentas de servicio > Generar nueva clave privada. Guarda el JSON fuera del repositorio. En local puedes usar `GOOGLE_APPLICATION_CREDENTIALS=C:/Users/tu_usuario/Downloads/firebase-service-account.json`; en Render usa `FIREBASE_SERVICE_ACCOUNT_JSON` con el contenido JSON de la cuenta de servicio.
 4. Instala Stripe CLI, autentícate y reenvía eventos al backend local:
 
 ```bash
@@ -69,8 +78,34 @@ stripe listen --forward-to localhost:4242/stripe/webhook
 
 5. Copia el valor `whsec_...` mostrado por Stripe CLI a `STRIPE_WEBHOOK_SECRET` y reinicia `npm run server`.
 6. En producción crea un webhook para `https://TU_BACKEND/stripe/webhook` con los eventos `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `checkout.session.async_payment_failed`, `checkout.session.expired`, `charge.refunded`, `refund.updated`, `refund.failed`, `charge.dispute.created` y `charge.dispute.closed`.
-7. Configura `APP_URL` con el dominio del frontend y `VITE_STRIPE_BACKEND_URL` con el dominio HTTPS de este backend. `VITE_BACKEND_URL` puede seguir apuntando al servicio existente de chat y videollamada. Render puede iniciar este repositorio con `npm start`.
+7. Configura `APP_URL` con el dominio del frontend y `VITE_STRIPE_BACKEND_URL` con el dominio HTTPS de este backend. `VITE_BACKEND_URL` debe apuntar al backend que atiende chat, videollamada y demás endpoints compartidos. Render puede iniciar este repositorio con `npm start`.
 
 La reservación, el importe y el bloqueo de disponibilidad se generan en el servidor. Una sesión Checkout expira después de 31 minutos; el webhook cancela esa reservación pendiente y vuelve a liberar la fecha. El frontend nunca recibe `STRIPE_SECRET_KEY` ni la cuenta de servicio Firebase.
 
 Para una prueba en modo test usa la tarjeta `4242 4242 4242 4242`, cualquier fecha futura y cualquier CVC. El resultado debe actualizar `pagos.estadoPago`, `pagos.identificadorPagoStripe`, `pagos.metodoPago`, `reservaciones.estadoPago` y la tabla de administración.
+
+## Deploy Netlify + Render
+
+Netlify usa `netlify.toml` con `npm run build` y publica `dist`. El redirect `/* -> /index.html` evita 404 al recargar rutas internas de React Router.
+
+Variables públicas en Netlify:
+
+```bash
+VITE_CLOUDINARY_CLOUD_NAME=...
+VITE_CLOUDINARY_UPLOAD_PRESET=...
+VITE_BACKEND_URL=https://medialuna-backend.onrender.com
+VITE_STRIPE_BACKEND_URL=https://medialuna-backend.onrender.com
+```
+
+Variables privadas en Render:
+
+```bash
+PORT=4242
+APP_URL=https://TU-SITIO-NETLIFY.netlify.app
+STRIPE_SECRET_KEY=...
+STRIPE_WEBHOOK_SECRET=...
+FIREBASE_PROJECT_ID=medialuna-ee356
+FIREBASE_SERVICE_ACCOUNT_JSON=...
+```
+
+`GOOGLE_APPLICATION_CREDENTIALS` sigue disponible para local si prefieres apuntar a un archivo JSON fuera del repositorio. No subas `.env` ni `.env.local`; ambos quedan ignorados por Git.
