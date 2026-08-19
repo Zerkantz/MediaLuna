@@ -471,10 +471,28 @@ export function AppProvider({ children }) {
   }
 
   const startStripePayment = async (reservationId) => {
-    console.log('Iniciando pago Stripe', { reservationId })
-    console.log('URL backend Stripe:', `${getStripeBackendUrl()}/stripe/checkout-session`)
     try {
-      const checkout = await createStripeCheckout({ reservationId })
+      const reservacion = data.reservaciones.find((item) => item.id === reservationId)
+      if (!reservacion) return { ok: false, message: 'Reservación no encontrada.' }
+
+      const total = Number(
+        reservacion.total ?? (Number(reservacion.precioSalon || 0) + Number(reservacion.totalServicios || 0)),
+      )
+      const payload = {
+        reservationId: reservacion.id,
+        total,
+      }
+
+      console.log('Iniciando pago Stripe', { reservationId: reservacion.id })
+      console.log('URL backend Stripe:', `${getStripeBackendUrl()}/stripe/checkout-session`)
+      console.log('Reservacion para Stripe:', reservacion)
+      console.log('Payload Stripe:', payload)
+
+      if (!Number.isFinite(total) || total <= 0) {
+        return { ok: false, message: 'Falta un total válido de la reservación en pesos mexicanos.' }
+      }
+
+      const checkout = await createStripeCheckout(payload)
       console.log('Respuesta backend Stripe:', checkout)
       if (checkout.status === 'paid') {
         if (checkout.payment && checkout.reservation) {
