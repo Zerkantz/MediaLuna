@@ -1,4 +1,4 @@
-import { useEffect, useEffectEvent, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import {
   ArrowRight,
@@ -10,7 +10,6 @@ import {
   CircleDollarSign,
   Clock3,
   CreditCard,
-  Download,
   Eye,
   Filter,
   ImagePlus,
@@ -37,6 +36,15 @@ import { CLOUDINARY_CONFIG, cloudinaryUploadNote, uploadSalonImage } from '../se
 import { subscribeReservacion } from '../services/firestoreService'
 import { StreamChatWidget } from '../components/StreamChatWidget'
 import { DailyVideoCallModal } from '../components/DailyVideoCallModal'
+import {
+  NUMBER_MAX_VALUE,
+  TEXT_MAX_LENGTH,
+  isValidPhoneInput,
+  limitText,
+  normalizeNumberInput,
+  normalizePhoneInput,
+  toBoundedNumber,
+} from '../utils/formLimits'
 import {
   AnimatedPage,
   Badge,
@@ -286,7 +294,7 @@ export function ClientReservationDetailPage() {
   const stripeSessionId = searchParams.get('session_id')
 
   const reservationFromData = data.reservaciones.find((item) => item.id === id && item.clienteId === currentUser?.id)
-  const liveReservationBelongsToUser = liveReservation && (!currentUser?.id || liveReservation.clienteId === currentUser.id)
+  const liveReservationBelongsToUser = liveReservation?.id === id && (!currentUser?.id || liveReservation.clienteId === currentUser.id)
   const reservation = liveReservationBelongsToUser ? { ...reservationFromData, ...liveReservation } : reservationFromData
   const reservationPayment = data.pagos.find((item) => item.reservacionId === id)
   const knownStripeSessionId = pickStripeCheckoutSessionId(
@@ -299,14 +307,14 @@ export function ClientReservationDetailPage() {
   const hasSuccessfulStripeReturn = paymentResult === 'success' && Boolean(stripeSessionId)
   const awaitingStripeConfirmation = reservation?.estadoPago === 'pendiente' && paymentState.awaitingConfirmation
 
-  const clearStripeReturnParams = useEffectEvent(() => {
+  const clearStripeReturnParams = useCallback(() => {
     const nextParams = new URLSearchParams(searchParams)
     nextParams.delete('payment')
     nextParams.delete('session_id')
     setSearchParams(nextParams, { replace: true })
-  })
+  }, [searchParams, setSearchParams])
 
-  const markPaymentConfirmedOnScreen = useEffectEvent(() => {
+  const markPaymentConfirmedOnScreen = useCallback(() => {
     stripeReturnRef.current.paid = true
     setPaymentState({
       loading: false,
@@ -315,9 +323,9 @@ export function ClientReservationDetailPage() {
       awaitingConfirmation: false,
     })
     clearStripeReturnParams()
-  })
+  }, [clearStripeReturnParams])
 
-  const syncReturnedPayment = useEffectEvent(async () => {
+  const syncReturnedPayment = useCallback(async () => {
     const sessionId = knownStripeSessionId || stripeSessionId
     if (!sessionId) return
 
@@ -328,10 +336,9 @@ export function ClientReservationDetailPage() {
     }
 
     markPaymentConfirmedOnScreen()
-  })
+  }, [confirmStripePayment, id, knownStripeSessionId, markPaymentConfirmedOnScreen, stripeSessionId])
 
   useEffect(() => {
-    setLiveReservation(null)
     return subscribeReservacion(
       id,
       (nextReservation) => {
@@ -345,18 +352,20 @@ export function ClientReservationDetailPage() {
         console.warn('No se pudo escuchar la reservación en tiempo real:', error)
       },
     )
-  }, [id, currentUser?.id])
+  }, [id, currentUser?.id, markPaymentConfirmedOnScreen])
 
   useEffect(() => {
     if (paymentResult === 'cancelled') {
-      setPaymentState({
-        loading: false,
-        message: 'El pago fue cancelado. Puedes intentarlo nuevamente.',
-        tone: 'warning',
-        awaitingConfirmation: false,
-      })
-      clearStripeReturnParams()
-      return undefined
+      const timeout = window.setTimeout(() => {
+        setPaymentState({
+          loading: false,
+          message: 'El pago fue cancelado. Puedes intentarlo nuevamente.',
+          tone: 'warning',
+          awaitingConfirmation: false,
+        })
+        clearStripeReturnParams()
+      }, 0)
+      return () => window.clearTimeout(timeout)
     }
 
     if (!hasSuccessfulStripeReturn) return undefined
@@ -364,16 +373,21 @@ export function ClientReservationDetailPage() {
     stripeReturnRef.current = { active: true, paid: reservation?.estadoPago === 'pagado' }
 
     if (reservation?.estadoPago === 'pagado') {
-      markPaymentConfirmedOnScreen()
-      return () => { stripeReturnRef.current.active = false }
+      const timeout = window.setTimeout(() => markPaymentConfirmedOnScreen(), 0)
+      return () => {
+        stripeReturnRef.current.active = false
+        window.clearTimeout(timeout)
+      }
     }
 
-    setPaymentState({
-      loading: true,
-      message: STRIPE_VERIFYING_MESSAGE,
-      tone: 'lilac',
-      awaitingConfirmation: true,
-    })
+    const loadingTimeout = window.setTimeout(() => {
+      setPaymentState({
+        loading: true,
+        message: STRIPE_VERIFYING_MESSAGE,
+        tone: 'lilac',
+        awaitingConfirmation: true,
+      })
+    }, 0)
 
     const timeout = window.setTimeout(() => {
       if (!stripeReturnRef.current.paid) {
@@ -386,13 +400,17 @@ export function ClientReservationDetailPage() {
       }
     }, 10000)
 
-    syncReturnedPayment()
+    const syncTimeout = window.setTimeout(() => {
+      syncReturnedPayment()
+    }, 0)
 
     return () => {
       stripeReturnRef.current.active = false
+      window.clearTimeout(loadingTimeout)
+      window.clearTimeout(syncTimeout)
       window.clearTimeout(timeout)
     }
-  }, [paymentResult, stripeSessionId, id, reservation?.estadoPago, hasSuccessfulStripeReturn])
+  }, [clearStripeReturnParams, hasSuccessfulStripeReturn, id, markPaymentConfirmedOnScreen, paymentResult, reservation?.estadoPago, stripeSessionId, syncReturnedPayment])
 
   const payReservation = async () => {
     setPaymentState({ loading: true, message: '', tone: 'lilac', awaitingConfirmation: false })
@@ -566,9 +584,18 @@ export function ClientProfilePage() {
   const { currentUser, updateClientProfile } = useApp()
   const [form, setForm] = useState({ nombre: currentUser?.nombre ?? '', telefono: currentUser?.telefono ?? '', correo: currentUser?.correo ?? '' })
   const [error, setError] = useState('')
+  const update = (field) => (event) => {
+    const value = field === 'telefono' ? normalizePhoneInput(event.target.value) : limitText(event.target.value)
+    setForm({ ...form, [field]: value })
+    setError('')
+  }
   const submit = async (event) => {
     event.preventDefault()
     setError('')
+    if (!isValidPhoneInput(form.telefono)) {
+      setError('Escribe un teléfono válido, sin letras.')
+      return
+    }
     const result = await updateClientProfile(form)
     if (!result.ok) setError(result.message)
   }
@@ -599,15 +626,15 @@ export function ClientProfilePage() {
             <div className="form-grid">
               <label className="field">
                 <span>Nombre</span>
-                <input required value={form.nombre} onChange={(event) => setForm({ ...form, nombre: event.target.value })} />
+                <input required maxLength={TEXT_MAX_LENGTH} value={form.nombre} onChange={update('nombre')} />
               </label>
               <label className="field">
                 <span>Teléfono</span>
-                <input required value={form.telefono} onChange={(event) => setForm({ ...form, telefono: event.target.value })} />
+                <input required type="tel" inputMode="tel" maxLength="13" value={form.telefono} onChange={update('telefono')} />
               </label>
               <label className="field field--full">
                 <span>Correo electrónico</span>
-                <input required value={form.correo} type="email" onChange={(event) => setForm({ ...form, correo: event.target.value })} />
+                <input required maxLength={TEXT_MAX_LENGTH} value={form.correo} type="email" onChange={update('correo')} />
               </label>
             </div>
             {error && <InfoNote tone="warning">{error}</InfoNote>}
@@ -667,7 +694,7 @@ export function OwnerReservationsPage() {
         <div className="table-toolbar table-toolbar--stack">
           <div className="listing-search">
             <Search size={16} />
-            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar por cliente, salón, fecha o estado" />
+            <input value={query} maxLength={TEXT_MAX_LENGTH} onChange={(event) => setQuery(limitText(event.target.value))} placeholder="Buscar por cliente, salón, fecha o estado" />
           </div>
           <div className="table-toolbar__filters">
             {['todas', ...reservationStatusOptions].map((status) => (
@@ -795,7 +822,6 @@ export function AdminDashboard() {
         title="Dashboard general"
         description="La operación de MediaLuna, con datos reales de Firestore."
         crumbs={[{ label: 'Dashboard' }]}
-        actions={<Button variant="secondary" icon={Download} disabled title="Exportación disponible próximamente">Exportar próximamente</Button>}
       />
       <div className="metric-grid metric-grid--admin">
         <MetricCard label="Reservaciones" value={adminData.reservaciones.length} helper="registros en Firestore" icon={CalendarCheck2} accent="lilac" />
@@ -832,7 +858,7 @@ export function AdminDashboard() {
 function ActivityRow({ icon: Icon, title, detail, time, tone }) { return <div className="activity-row"><span className={clsx('activity-icon', `activity-icon--${tone}`)}><Icon size={16} /></span><span><strong>{title}</strong><small>{detail}</small></span><time>{time}</time></div> }
 
 export function AdminUsersPage() {
-  const { data, createUser, toggleUser } = useApp()
+  const { data, createUser, toggleUser, notify } = useApp()
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [form, setForm] = useState({ nombre: '', correo: '', telefono: '' })
@@ -845,9 +871,32 @@ export function AdminUsersPage() {
     roleLabel[user.rol],
     user.activo === false ? 'inactivo' : 'activo',
   ]))
-  const submit = async (event) => { event.preventDefault(); const created = await createUser({ ...form, activo: true, fechaCreacion: format(new Date(), 'yyyy-MM-dd'), rol: 'dueno', salonesIds: [] }); if (!created) return; setForm({ nombre: '', correo: '', telefono: '' }); setOpen(false) }
+  const updateForm = (field) => (event) => {
+    const value = field === 'telefono' ? normalizePhoneInput(event.target.value) : limitText(event.target.value)
+    setForm({ ...form, [field]: value })
+  }
+  const submit = async (event) => {
+    event.preventDefault()
+    if (!isValidPhoneInput(form.telefono)) {
+      notify('Escribe un teléfono válido, sin letras.', 'warning')
+      return
+    }
+    const created = await createUser({
+      ...form,
+      nombre: limitText(form.nombre).trim(),
+      correo: limitText(form.correo).trim().toLowerCase(),
+      telefono: normalizePhoneInput(form.telefono),
+      activo: true,
+      fechaCreacion: format(new Date(), 'yyyy-MM-dd'),
+      rol: 'dueno',
+      salonesIds: [],
+    })
+    if (!created) return
+    setForm({ nombre: '', correo: '', telefono: '' })
+    setOpen(false)
+  }
   const columns = [{ key: 'nombre', label: 'Usuario', render: (row) => <span className="table-person"><span className="avatar avatar--small">{row.nombre[0]}</span><span><strong>{row.nombre}</strong><small>{row.correo}</small></span></span> }, { key: 'rol', label: 'Rol', render: (row) => <Badge tone={row.rol === 'administrador' ? 'lilac' : row.rol === 'dueno' ? 'gold' : 'neutral'}>{roleLabel[row.rol]}</Badge> }, { key: 'fechaCreacion', label: 'Alta', render: (row) => formatDate(row.fechaCreacion, 'd MMM yyyy') }, { key: 'activo', label: 'Estado', render: (row) => <StatusBadge status={row.activo ? 'activo' : 'inactivo'} /> }, { key: 'actions', label: '', render: (row) => <div className="table-actions"><button className="icon-button" type="button" title="La contraseña se gestiona desde Firebase Auth" disabled><LockKeyhole size={15} /></button><button className="icon-button" type="button" title={row.activo ? 'Desactivar' : 'Activar'} onClick={() => toggleUser(row.id)}>{row.activo ? <Trash2 size={15} /> : <Check size={15} />}</button></div> }]
-  return <AnimatedPage className="panel-page"><PanelIntro eyebrow="Personas" title="Gestión de usuarios" description="Controla accesos de dueños y administradores." crumbs={[{ label: 'Admin', to: '/admin' }, { label: 'Usuarios' }]} actions={<Button icon={UserPlus} onClick={() => setOpen((value) => !value)}>Crear usuario dueño</Button>} />{open && <div className="workspace-card inline-form-card" data-reveal><div><span className="eyebrow">Nuevo acceso</span><h2>Crear usuario dueño</h2><p>La contraseña temporal será gestionada cuando se conecte Firebase Auth.</p></div><form className="inline-form" onSubmit={submit}><input required placeholder="Nombre completo" value={form.nombre} onChange={(event) => setForm({ ...form, nombre: event.target.value })} /><input required type="email" placeholder="Correo" value={form.correo} onChange={(event) => setForm({ ...form, correo: event.target.value })} /><input required placeholder="Teléfono" value={form.telefono} onChange={(event) => setForm({ ...form, telefono: event.target.value })} /><Button type="submit" size="sm">Guardar dueño</Button></form><InfoNote tone="warning"><LockKeyhole size={15} /> Contraseña temporal: placeholder de conexión.</InfoNote></div>}<div className="workspace-card"><div className="table-toolbar"><div className="listing-search"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar por nombre, correo, rol o estado" /></div><Badge tone="neutral">{rows.length} usuarios</Badge></div><Table columns={columns} rows={rows} /></div><InfoNote><CircleAlert size={15} /> {owners.length} dueños tienen salones asignados. Los permisos se basan en el campo rol.</InfoNote></AnimatedPage>
+  return <AnimatedPage className="panel-page"><PanelIntro eyebrow="Personas" title="Gestión de usuarios" description="Controla accesos de dueños y administradores." crumbs={[{ label: 'Admin', to: '/admin' }, { label: 'Usuarios' }]} actions={<Button icon={UserPlus} onClick={() => setOpen((value) => !value)}>Crear usuario dueño</Button>} />{open && <div className="workspace-card inline-form-card" data-reveal><div><span className="eyebrow">Nuevo acceso</span><h2>Crear usuario dueño</h2><p>La contraseña temporal será gestionada cuando se conecte Firebase Auth.</p></div><form className="inline-form" onSubmit={submit}><input required maxLength={TEXT_MAX_LENGTH} placeholder="Nombre completo" value={form.nombre} onChange={updateForm('nombre')} /><input required type="email" maxLength={TEXT_MAX_LENGTH} placeholder="Correo" value={form.correo} onChange={updateForm('correo')} /><input required type="tel" inputMode="tel" maxLength="13" placeholder="Teléfono" value={form.telefono} onChange={updateForm('telefono')} /><Button type="submit" size="sm">Guardar dueño</Button></form><InfoNote tone="warning"><LockKeyhole size={15} /> Contraseña temporal: placeholder de conexión.</InfoNote></div>}<div className="workspace-card"><div className="table-toolbar"><div className="listing-search"><Search size={16} /><input value={query} maxLength={TEXT_MAX_LENGTH} onChange={(event) => setQuery(limitText(event.target.value))} placeholder="Buscar por nombre, correo, rol o estado" /></div><Badge tone="neutral">{rows.length} usuarios</Badge></div><Table columns={columns} rows={rows} /></div><InfoNote><CircleAlert size={15} /> {owners.length} dueños tienen salones asignados. Los permisos se basan en el campo rol.</InfoNote></AnimatedPage>
 }
 
 export function AdminSalonsPage() {
@@ -859,7 +908,17 @@ export function AdminSalonsPage() {
   const emptyForm = { name: '', type: '', location: '', phone: '', capacity: '', basePrice: '', description: '', duenoId: '', active: true, serviciosIds: [], urlImagen: '', idPublicoCloudinary: '' }
   const [form, setForm] = useState(emptyForm)
   const owners = data.usuarios.filter((user) => user.rol === 'dueno' && user.activo)
-  const update = (field) => (event) => setForm({ ...form, [field]: event.target.type === 'checkbox' ? event.target.checked : event.target.value })
+  const update = (field) => (event) => {
+    const { type, checked, value } = event.target
+    const nextValue = type === 'checkbox'
+      ? checked
+      : field === 'phone'
+        ? normalizePhoneInput(value)
+        : ['capacity', 'basePrice'].includes(field)
+          ? normalizeNumberInput(value, { min: field === 'capacity' ? 1 : 0 })
+          : limitText(value)
+    setForm({ ...form, [field]: nextValue })
+  }
   const resetForm = () => { setForm(emptyForm); setEditingId(null); setOpen(false); setUploading(false) }
   const startCreate = () => { setForm(emptyForm); setEditingId(null); setOpen(true) }
   const startEdit = (salon) => {
@@ -911,8 +970,8 @@ export function AdminSalonsPage() {
       accent: currentSalon?.accent ?? '#8e7ab5',
       active: form.active,
       availableDates: currentSalon?.availableDates ?? [],
-      basePrice: Number(form.basePrice),
-      capacity: Number(form.capacity),
+      basePrice: toBoundedNumber(form.basePrice),
+      capacity: toBoundedNumber(form.capacity, { min: 1, fallback: 1 }),
       description: form.description.trim(),
       direccion: currentSalon?.direccion ?? form.location.trim(),
       location: form.location.trim(),
@@ -949,7 +1008,7 @@ export function AdminSalonsPage() {
     ])
   })
   const columns = [{ key: 'name', label: 'Salón', render: (row) => <span className="table-person"><img src={row.urlImagen || row.photos?.[0]} alt="" /><span><strong>{row.name}</strong><small>{getSalonLocation(row)}</small></span></span> }, { key: 'duenoId', label: 'Dueño', render: (row) => data.usuarios.find((user) => user.id === row.duenoId || user.salonesIds?.includes(row.id))?.nombre ?? 'Sin asignar' }, { key: 'type', label: 'Tipo' }, { key: 'capacity', label: 'Capacidad', render: (row) => `${row.capacity} personas` }, { key: 'basePrice', label: 'Precio base', render: (row) => formatCurrency(row.basePrice) }, { key: 'active', label: 'Estado', render: (row) => <StatusBadge status={row.active ? 'activo' : 'inactivo'} /> }, { key: 'actions', label: '', render: (row) => <div className="table-actions"><button className="icon-button" type="button" title="Editar salón" onClick={() => startEdit(row)}><Pencil size={15} /></button><button className="icon-button" type="button" onClick={() => toggleSalon(row.id)} title={row.active ? 'Ocultar' : 'Publicar'}>{row.active ? <Eye size={15} /> : <Check size={15} />}</button></div> }]
-  return <AnimatedPage className="panel-page"><PanelIntro eyebrow="Catálogo" title="Gestión de salones" description="Administra espacios, precios, fotos y publicación." crumbs={[{ label: 'Admin', to: '/admin' }, { label: 'Salones' }]} actions={<Button icon={Plus} onClick={startCreate}>Nuevo salón</Button>} />{open && <div className="workspace-card inline-form-card" data-reveal><div><span className="eyebrow">{editingId ? 'Editar salón' : 'Alta de salón'}</span><h2>{editingId ? 'Actualizar espacio' : 'Agregar un nuevo espacio'}</h2><p>El formulario guarda los campos de salones, asigna dueño con duenoId y usa Cloudinary para la imagen principal.</p></div><form className="inline-form inline-form--salon" onSubmit={submit}><input required placeholder="Nombre del salón" value={form.name} onChange={update('name')} /><input required placeholder="Tipo de salón" value={form.type} onChange={update('type')} /><input required placeholder="Ciudad / zona" value={form.location} onChange={update('location')} /><input placeholder="Teléfono" value={form.phone} onChange={update('phone')} /><input required type="number" min="1" placeholder="Capacidad" value={form.capacity} onChange={update('capacity')} /><input required type="number" min="0" placeholder="Precio base" value={form.basePrice} onChange={update('basePrice')} /><select required value={form.duenoId} onChange={update('duenoId')}><option value="">Asignar dueño</option>{owners.map((owner) => <option value={owner.id} key={owner.id}>{owner.nombre}</option>)}</select><textarea required placeholder="Descripción" value={form.description} onChange={update('description')} /><div className="checkbox-grid">{data.servicios.map((service) => <label key={service.id}><input type="checkbox" checked={form.serviciosIds.includes(service.id)} onChange={() => toggleServiceId(service.id)} />{service.nombre}</label>)}</div><label className="toggle-line"><input type="checkbox" checked={form.active} onChange={update('active')} /> Publicado</label><label className="upload-field"><ImagePlus size={16} />{uploading ? 'Subiendo...' : 'Subir imagen'}<input type="file" accept="image/*" onChange={uploadImage} /></label>{form.urlImagen && <span className="form-preview"><img src={form.urlImagen} alt="Preview del salón" />Imagen principal lista</span>}<div className="form-actions"><Button type="submit" size="sm" disabled={uploading}>{editingId ? 'Guardar cambios' : 'Guardar salón'}</Button>{editingId && <Button type="button" variant="danger" size="sm" onClick={archiveSalon}>Archivar salón</Button>}<Button type="button" variant="ghost" size="sm" onClick={resetForm}>Cancelar</Button></div></form><InfoNote tone="lilac"><ImagePlus size={15} /> Cloudinary · cloud_name: {CLOUDINARY_CONFIG.cloudName || 'pendiente'} · upload_preset: {CLOUDINARY_CONFIG.uploadPreset}. {cloudinaryUploadNote}</InfoNote></div>}<div className="workspace-card"><div className="table-toolbar"><div className="listing-search"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar por salón, dueño, tipo, ciudad o estado" /></div><Badge tone="neutral">{rows.length} salones</Badge></div><Table columns={columns} rows={rows} /></div></AnimatedPage>
+  return <AnimatedPage className="panel-page"><PanelIntro eyebrow="Catálogo" title="Gestión de salones" description="Administra espacios, precios, fotos y publicación." crumbs={[{ label: 'Admin', to: '/admin' }, { label: 'Salones' }]} actions={<Button icon={Plus} onClick={startCreate}>Nuevo salón</Button>} />{open && <div className="workspace-card inline-form-card" data-reveal><div><span className="eyebrow">{editingId ? 'Editar salón' : 'Alta de salón'}</span><h2>{editingId ? 'Actualizar espacio' : 'Agregar un nuevo espacio'}</h2><p>El formulario guarda los campos de salones, asigna dueño con duenoId y usa Cloudinary para la imagen principal.</p></div><form className="inline-form inline-form--salon" onSubmit={submit}><input required maxLength={TEXT_MAX_LENGTH} placeholder="Nombre del salón" value={form.name} onChange={update('name')} /><input required maxLength={TEXT_MAX_LENGTH} placeholder="Tipo de salón" value={form.type} onChange={update('type')} /><input required maxLength={TEXT_MAX_LENGTH} placeholder="Ciudad / zona" value={form.location} onChange={update('location')} /><input type="tel" inputMode="tel" maxLength="13" placeholder="Teléfono" value={form.phone} onChange={update('phone')} /><input required type="number" min="1" max={NUMBER_MAX_VALUE} placeholder="Capacidad" value={form.capacity} onChange={update('capacity')} /><input required type="number" min="0" max={NUMBER_MAX_VALUE} placeholder="Precio base" value={form.basePrice} onChange={update('basePrice')} /><select required value={form.duenoId} onChange={update('duenoId')}><option value="">Asignar dueño</option>{owners.map((owner) => <option value={owner.id} key={owner.id}>{owner.nombre}</option>)}</select><textarea required maxLength={TEXT_MAX_LENGTH} placeholder="Descripción" value={form.description} onChange={update('description')} /><div className="checkbox-grid">{data.servicios.map((service) => <label key={service.id}><input type="checkbox" checked={form.serviciosIds.includes(service.id)} onChange={() => toggleServiceId(service.id)} />{service.nombre}</label>)}</div><label className="toggle-line"><input type="checkbox" checked={form.active} onChange={update('active')} /> Publicado</label><label className="upload-field"><ImagePlus size={16} />{uploading ? 'Subiendo...' : 'Subir imagen'}<input type="file" accept="image/*" onChange={uploadImage} /></label>{form.urlImagen && <span className="form-preview"><img src={form.urlImagen} alt="Preview del salón" />Imagen principal lista</span>}<div className="form-actions"><Button type="submit" size="sm" disabled={uploading}>{editingId ? 'Guardar cambios' : 'Guardar salón'}</Button>{editingId && <Button type="button" variant="danger" size="sm" onClick={archiveSalon}>Archivar salón</Button>}<Button type="button" variant="ghost" size="sm" onClick={resetForm}>Cancelar</Button></div></form><InfoNote tone="lilac"><ImagePlus size={15} /> Cloudinary · cloud_name: {CLOUDINARY_CONFIG.cloudName || 'pendiente'} · upload_preset: {CLOUDINARY_CONFIG.uploadPreset}. {cloudinaryUploadNote}</InfoNote></div>}<div className="workspace-card"><div className="table-toolbar"><div className="listing-search"><Search size={16} /><input value={query} maxLength={TEXT_MAX_LENGTH} onChange={(event) => setQuery(limitText(event.target.value))} placeholder="Buscar por salón, dueño, tipo, ciudad o estado" /></div><Badge tone="neutral">{rows.length} salones</Badge></div><Table columns={columns} rows={rows} /></div></AnimatedPage>
 }
 
 export function AdminServicesPage() {
@@ -960,7 +1019,15 @@ export function AdminServicesPage() {
   const [form, setForm] = useState(emptyForm)
   const [uploading, setUploading] = useState(false)
   const editing = Boolean(form.id)
-  const update = (field) => (event) => setForm({ ...form, [field]: event.target.type === 'checkbox' ? event.target.checked : event.target.value })
+  const update = (field) => (event) => {
+    const { type, checked, value } = event.target
+    const nextValue = type === 'checkbox'
+      ? checked
+      : field === 'precio'
+        ? normalizeNumberInput(value)
+        : limitText(value)
+    setForm({ ...form, [field]: nextValue })
+  }
   const resetServiceForm = () => { setForm(emptyForm); setUploading(false); setOpen(false) }
   const startCreateService = () => { setForm(emptyForm); setUploading(false); setOpen(true) }
   const editService = (service) => {
@@ -994,7 +1061,7 @@ export function AdminServicesPage() {
     event.preventDefault()
     await createService({
       ...form,
-      precio: Number(form.precio),
+      precio: toBoundedNumber(form.precio),
       nombre: form.nombre.trim(),
       descripcion: form.descripcion.trim(),
       urlImagen: form.urlImagen.trim(),
@@ -1009,7 +1076,7 @@ export function AdminServicesPage() {
     service.activo ? 'activo' : 'inactivo',
   ]))
   const columns = [{ key: 'nombre', label: 'Servicio', render: (row) => <span className="table-person">{row.urlImagen ? <img src={row.urlImagen} alt="" /> : <span className="service-table-icon"><Sparkles size={15} /></span>}<span><strong>{row.nombre}</strong><small>{row.descripcion}</small></span></span> }, { key: 'precio', label: 'Precio', render: (row) => formatCurrency(row.precio) }, { key: 'activo', label: 'Estado', render: (row) => <StatusBadge status={row.activo ? 'activo' : 'inactivo'} /> }, { key: 'actions', label: '', render: (row) => <div className="table-actions"><button type="button" className="icon-button" title="Editar servicio" onClick={() => editService(row)}><Pencil size={15} /></button><button type="button" className="icon-button" title={row.activo ? 'Desactivar' : 'Activar'} onClick={() => toggleServiceActive(row.id)}>{row.activo ? <Trash2 size={15} /> : <Check size={15} />}</button></div> }]
-  return <AnimatedPage className="panel-page"><PanelIntro eyebrow="Catálogo" title="Gestión de servicios" description="Crea extras que los clientes pueden sumar a su reservación." crumbs={[{ label: 'Admin', to: '/admin' }, { label: 'Servicios' }]} actions={<Button icon={Plus} onClick={startCreateService}>Agregar</Button>} />{open && <><div className="workspace-card quick-create"><div><span className="eyebrow">{editing ? 'Editar servicio' : 'Nuevo servicio'}</span><h2>{editing ? 'Actualizar opción' : 'Sumar una opción'}</h2><p>El precio se guarda en pesos mexicanos y sólo los servicios activos aparecen al reservar.</p></div><form className="inline-form service-form" onSubmit={submit}><input required placeholder="Nombre del servicio" value={form.nombre} onChange={update('nombre')} /><input required min="0" type="number" placeholder="Precio" value={form.precio} onChange={update('precio')} /><label className="upload-field"><ImagePlus size={16} />{uploading ? 'Subiendo...' : 'Subir imagen del servicio'}<input type="file" accept="image/*" onChange={uploadImage} /></label>{form.urlImagen && <span className="form-preview"><img src={form.urlImagen} alt="Preview del servicio" />Imagen lista</span>}<textarea required placeholder="Descripción" value={form.descripcion} onChange={update('descripcion')} /><label className="toggle-line"><input type="checkbox" checked={form.activo} onChange={update('activo')} /> Activo</label><div className="form-actions"><Button type="submit" icon={Plus} disabled={uploading}>{editing ? 'Guardar cambios' : 'Agregar'}</Button><Button type="button" variant="ghost" onClick={resetServiceForm}>Cancelar</Button></div></form></div><InfoNote tone="lilac"><ImagePlus size={15} /> Cloudinary · cloud_name: {CLOUDINARY_CONFIG.cloudName || 'pendiente'} · upload_preset: {CLOUDINARY_CONFIG.uploadPreset}. {cloudinaryUploadNote}</InfoNote></>}<div className="workspace-card"><div className="table-toolbar"><div className="listing-search"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar por servicio, descripción, precio o estado" /></div><Badge tone="neutral">{rows.length} servicios</Badge></div><Table columns={columns} rows={rows} /></div></AnimatedPage>
+  return <AnimatedPage className="panel-page"><PanelIntro eyebrow="Catálogo" title="Gestión de servicios" description="Crea extras que los clientes pueden sumar a su reservación." crumbs={[{ label: 'Admin', to: '/admin' }, { label: 'Servicios' }]} actions={<Button icon={Plus} onClick={startCreateService}>Agregar</Button>} />{open && <><div className="workspace-card quick-create"><div><span className="eyebrow">{editing ? 'Editar servicio' : 'Nuevo servicio'}</span><h2>{editing ? 'Actualizar opción' : 'Sumar una opción'}</h2><p>El precio se guarda en pesos mexicanos y sólo los servicios activos aparecen al reservar.</p></div><form className="inline-form service-form" onSubmit={submit}><input required maxLength={TEXT_MAX_LENGTH} placeholder="Nombre del servicio" value={form.nombre} onChange={update('nombre')} /><input required min="0" max={NUMBER_MAX_VALUE} type="number" placeholder="Precio" value={form.precio} onChange={update('precio')} /><label className="upload-field"><ImagePlus size={16} />{uploading ? 'Subiendo...' : 'Subir imagen del servicio'}<input type="file" accept="image/*" onChange={uploadImage} /></label>{form.urlImagen && <span className="form-preview"><img src={form.urlImagen} alt="Preview del servicio" />Imagen lista</span>}<textarea required maxLength={TEXT_MAX_LENGTH} placeholder="Descripción" value={form.descripcion} onChange={update('descripcion')} /><label className="toggle-line"><input type="checkbox" checked={form.activo} onChange={update('activo')} /> Activo</label><div className="form-actions"><Button type="submit" icon={Plus} disabled={uploading}>{editing ? 'Guardar cambios' : 'Agregar'}</Button><Button type="button" variant="ghost" onClick={resetServiceForm}>Cancelar</Button></div></form></div><InfoNote tone="lilac"><ImagePlus size={15} /> Cloudinary · cloud_name: {CLOUDINARY_CONFIG.cloudName || 'pendiente'} · upload_preset: {CLOUDINARY_CONFIG.uploadPreset}. {cloudinaryUploadNote}</InfoNote></>}<div className="workspace-card"><div className="table-toolbar"><div className="listing-search"><Search size={16} /><input value={query} maxLength={TEXT_MAX_LENGTH} onChange={(event) => setQuery(limitText(event.target.value))} placeholder="Buscar por servicio, descripción, precio o estado" /></div><Badge tone="neutral">{rows.length} servicios</Badge></div><Table columns={columns} rows={rows} /></div></AnimatedPage>
 }
 
 export function AdminAvailabilityPage() {
@@ -1026,7 +1093,7 @@ export function AdminAvailabilityPage() {
     await createAvailability({
       estado: form.estado,
       fecha: form.fecha,
-      precio: Number(form.precio || selectedSalon?.basePrice || 0),
+      precio: toBoundedNumber(form.precio || selectedSalon?.basePrice || 0),
       salonesIds: [form.salonId],
     })
     setForm({ salonId: activeSalons[0]?.id ?? '', fecha: '', precio: '', estado: 'disponible' })
@@ -1041,7 +1108,7 @@ export function AdminAvailabilityPage() {
     })
     .sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)))
   const columns = [{ key: 'fecha', label: 'Fecha', render: (row) => <strong>{formatDate(row.fecha, 'd MMM yyyy')}</strong> }, { key: 'salon', label: 'Salón', render: (row) => data.salones.filter((salon) => row.salonesIds.includes(salon.id)).map((salon) => salon.name).join(', ') }, { key: 'precio', label: 'Precio', render: (row) => formatCurrency(row.precio) }, { key: 'estado', label: 'Estado', render: (row) => <select className="status-select" value={row.estado === 'bloqueado' ? 'bloqueada' : row.estado} onChange={(event) => updateAvailability(row.id, event.target.value)}><option value="disponible">disponible</option><option value="reservada">reservada</option><option value="bloqueada">bloqueada</option></select> }, { key: 'actions', label: '', render: (row) => <button className="icon-button" type="button" title="Bloquear fecha" onClick={() => updateAvailability(row.id, 'bloqueada')}><Eye size={15} /></button> }]
-  return <AnimatedPage className="panel-page"><PanelIntro eyebrow="Calendario" title="Gestión de disponibilidad" description="Define qué fechas pueden reservarse y bajo qué precio." crumbs={[{ label: 'Admin', to: '/admin' }, { label: 'Disponibilidad' }]} actions={<Button variant="secondary" icon={Plus} onClick={() => setOpen((value) => !value)}>Nueva fecha</Button>} />{open && <div className="workspace-card inline-form-card" data-reveal><div><span className="eyebrow">Nueva disponibilidad</span><h2>Crear fecha reservable</h2><p>La fecha se guarda en disponibilidad con salonesIds como array.</p></div><form className="inline-form" onSubmit={submit}><select required value={form.salonId} onChange={(event) => setForm({ ...form, salonId: event.target.value, precio: activeSalons.find((salon) => salon.id === event.target.value)?.basePrice ?? form.precio })}>{activeSalons.map((salon) => <option key={salon.id} value={salon.id}>{salon.name}</option>)}</select><input required type="date" value={form.fecha} onChange={(event) => setForm({ ...form, fecha: event.target.value })} /><input type="number" min="0" placeholder={`Precio sugerido ${formatCurrency(selectedSalon?.basePrice ?? 0)}`} value={form.precio} onChange={(event) => setForm({ ...form, precio: event.target.value })} /><select value={form.estado} onChange={(event) => setForm({ ...form, estado: event.target.value })}><option value="disponible">disponible</option><option value="reservada">reservada</option><option value="bloqueada">bloqueada</option></select><Button type="submit" size="sm">Guardar fecha</Button></form></div>}<div className="workspace-card"><div className="table-toolbar table-toolbar--stack"><div className="listing-search"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar por salón, fecha, precio o estado" /></div><div className="table-toolbar__filters">{['todas', 'disponible', 'reservada', 'bloqueada'].map((state) => <button type="button" key={state} className={clsx('toolbar-chip', filter === state && 'toolbar-chip--active')} onClick={() => setFilter(state)}><CalendarDays size={14} /> {state === 'todas' ? 'Todas las fechas' : state}</button>)}</div><span className="table-date-note"><CalendarDays size={14} /> Fechas desde Firestore</span></div><Table columns={columns} rows={rows} /></div><InfoNote tone="lilac"><CalendarDays size={15} /> Los clientes sólo pueden reservar fechas en estado disponible. Al reservar, la fecha cambia a reservada.</InfoNote></AnimatedPage>
+  return <AnimatedPage className="panel-page"><PanelIntro eyebrow="Calendario" title="Gestión de disponibilidad" description="Define qué fechas pueden reservarse y bajo qué precio." crumbs={[{ label: 'Admin', to: '/admin' }, { label: 'Disponibilidad' }]} actions={<Button variant="secondary" icon={Plus} onClick={() => setOpen((value) => !value)}>Nueva fecha</Button>} />{open && <div className="workspace-card inline-form-card" data-reveal><div><span className="eyebrow">Nueva disponibilidad</span><h2>Crear fecha reservable</h2><p>La fecha se guarda en disponibilidad con salonesIds como array.</p></div><form className="inline-form" onSubmit={submit}><select required value={form.salonId} onChange={(event) => setForm({ ...form, salonId: event.target.value, precio: normalizeNumberInput(activeSalons.find((salon) => salon.id === event.target.value)?.basePrice ?? form.precio) })}>{activeSalons.map((salon) => <option key={salon.id} value={salon.id}>{salon.name}</option>)}</select><input required type="date" value={form.fecha} onChange={(event) => setForm({ ...form, fecha: event.target.value })} /><input type="number" min="0" max={NUMBER_MAX_VALUE} placeholder={`Precio sugerido ${formatCurrency(selectedSalon?.basePrice ?? 0)}`} value={form.precio} onChange={(event) => setForm({ ...form, precio: normalizeNumberInput(event.target.value) })} /><select value={form.estado} onChange={(event) => setForm({ ...form, estado: event.target.value })}><option value="disponible">disponible</option><option value="reservada">reservada</option><option value="bloqueada">bloqueada</option></select><Button type="submit" size="sm">Guardar fecha</Button></form></div>}<div className="workspace-card"><div className="table-toolbar table-toolbar--stack"><div className="listing-search"><Search size={16} /><input value={query} maxLength={TEXT_MAX_LENGTH} onChange={(event) => setQuery(limitText(event.target.value))} placeholder="Buscar por salón, fecha, precio o estado" /></div><div className="table-toolbar__filters">{['todas', 'disponible', 'reservada', 'bloqueada'].map((state) => <button type="button" key={state} className={clsx('toolbar-chip', filter === state && 'toolbar-chip--active')} onClick={() => setFilter(state)}><CalendarDays size={14} /> {state === 'todas' ? 'Todas las fechas' : state}</button>)}</div><span className="table-date-note"><CalendarDays size={14} /> Fechas desde Firestore</span></div><Table columns={columns} rows={rows} /></div><InfoNote tone="lilac"><CalendarDays size={15} /> Los clientes sólo pueden reservar fechas en estado disponible. Al reservar, la fecha cambia a reservada.</InfoNote></AnimatedPage>
 }
 
 export function AdminReservationsPage() {
@@ -1064,7 +1131,7 @@ export function AdminReservationsPage() {
     ])
   })
   const columns = [{ key: 'id', label: 'ID', render: (row) => <code className="id-code">{row.id}</code> }, { key: 'salon', label: 'Salón', render: (row) => data.salones.find((salon) => row.salonesIds.includes(salon.id))?.name }, { key: 'cliente', label: 'Cliente', render: (row) => data.usuarios.find((user) => user.id === row.clienteId)?.nombre }, { key: 'fecha', label: 'Fecha', render: (row) => formatDate(row.fecha, 'd MMM yyyy') }, { key: 'estadoReservacion', label: 'Reservación', render: (row) => <select className="status-select" value={normalizeReservationStatus(row.estadoReservacion)} onChange={(event) => updateReservationStatus(row.id, event.target.value)}>{reservationStatusOptions.map((status) => <option value={status} key={status}>{status}</option>)}</select> }, { key: 'estadoPago', label: 'Pago', render: (row) => <StatusBadge status={row.estadoPago} /> }, { key: 'total', label: 'Total', render: (row) => <strong>{formatCurrency(row.total)}</strong> }]
-  return <AnimatedPage className="panel-page"><PanelIntro eyebrow="Operación" title="Gestión de reservaciones" description="Consulta, filtra y da seguimiento a cada solicitud." crumbs={[{ label: 'Admin', to: '/admin' }, { label: 'Reservaciones' }]} actions={<Button variant="secondary" icon={Download} disabled title="Exportación disponible próximamente">Exportar próximamente</Button>} /><div className="workspace-card"><div className="table-toolbar"><div className="listing-search"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar por ID, cliente, salón, fecha, pago o total" /></div><select className="status-select" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="todas">Todas</option>{reservationStatusOptions.map((status) => <option value={status} key={status}>{status}</option>)}</select></div><Table columns={columns} rows={rows} /></div></AnimatedPage>
+  return <AnimatedPage className="panel-page"><PanelIntro eyebrow="Operación" title="Gestión de reservaciones" description="Consulta, filtra y da seguimiento a cada solicitud." crumbs={[{ label: 'Admin', to: '/admin' }, { label: 'Reservaciones' }]} /><div className="workspace-card"><div className="table-toolbar"><div className="listing-search"><Search size={16} /><input value={query} maxLength={TEXT_MAX_LENGTH} onChange={(event) => setQuery(limitText(event.target.value))} placeholder="Buscar por ID, cliente, salón, fecha, pago o total" /></div><select className="status-select" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="todas">Todas</option>{reservationStatusOptions.map((status) => <option value={status} key={status}>{status}</option>)}</select></div><Table columns={columns} rows={rows} /></div></AnimatedPage>
 }
 
 export function AdminPaymentsPage() {
@@ -1091,7 +1158,7 @@ export function AdminPaymentsPage() {
     ])
   })
   const columns = [{ key: 'id', label: 'Pago', render: (row) => <span className="table-person"><span className="service-table-icon service-table-icon--gold"><CreditCard size={15} /></span><span><strong>{row.id}</strong><small>{row.identificadorPagoStripe || 'Stripe pendiente'}</small></span></span> }, { key: 'cliente', label: 'Cliente', render: (row) => data.usuarios.find((user) => user.id === row.clienteId)?.nombre }, { key: 'monto', label: 'Monto', render: (row) => <strong>{formatCurrency(row.monto)}</strong> }, { key: 'fechaCreacion', label: 'Fecha', render: (row) => formatDate(row.fechaCreacion, 'd MMM yyyy') }, { key: 'estadoPago', label: 'Estado', render: (row) => <StatusBadge status={getPaymentStatus(row.estadoPago)} /> }, { key: 'metodoPago', label: 'Método' }]
-  return <AnimatedPage className="panel-page"><PanelIntro eyebrow="Finanzas" title="Gestión de pagos" description="Todos los movimientos ligados a reservaciones." crumbs={[{ label: 'Admin', to: '/admin' }, { label: 'Pagos' }]} actions={<Button variant="secondary" icon={WalletCards} onClick={() => window.open('https://dashboard.stripe.com/payments', '_blank', 'noopener,noreferrer')}>Abrir Stripe</Button>} /><div className="metric-grid metric-grid--compact"><MetricCard label="Pagado" value={formatCurrency(data.pagos.filter((item) => getPaymentStatus(item.estadoPago) === 'pagado').reduce((sum, item) => sum + Number(item.monto || 0), 0))} helper="confirmado" icon={Check} accent="sage" /><MetricCard label="Pendiente" value={formatCurrency(data.pagos.filter((item) => getPaymentStatus(item.estadoPago) === 'pendiente').reduce((sum, item) => sum + Number(item.monto || 0), 0))} helper="por cobrar" icon={Clock3} accent="gold" /></div><div className="workspace-card"><div className="table-toolbar"><div className="listing-search"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar por cliente, salón, pago o Stripe" /></div><select className="status-select" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>{paymentStatusOptions.map((status) => <option value={status} key={status}>{status === 'todos' ? 'Todos los estados' : status}</option>)}</select></div><Table columns={columns} rows={rows} /></div><InfoNote tone="lilac" icon={ShieldCheck}>Los estados pagados se confirman exclusivamente mediante el webhook firmado de Stripe.</InfoNote></AnimatedPage>
+  return <AnimatedPage className="panel-page"><PanelIntro eyebrow="Finanzas" title="Gestión de pagos" description="Todos los movimientos ligados a reservaciones." crumbs={[{ label: 'Admin', to: '/admin' }, { label: 'Pagos' }]} actions={<Button variant="secondary" icon={WalletCards} onClick={() => window.open('https://dashboard.stripe.com/payments', '_blank', 'noopener,noreferrer')}>Abrir Stripe</Button>} /><div className="metric-grid metric-grid--compact"><MetricCard label="Pagado" value={formatCurrency(data.pagos.filter((item) => getPaymentStatus(item.estadoPago) === 'pagado').reduce((sum, item) => sum + Number(item.monto || 0), 0))} helper="confirmado" icon={Check} accent="sage" /><MetricCard label="Pendiente" value={formatCurrency(data.pagos.filter((item) => getPaymentStatus(item.estadoPago) === 'pendiente').reduce((sum, item) => sum + Number(item.monto || 0), 0))} helper="por cobrar" icon={Clock3} accent="gold" /></div><div className="workspace-card"><div className="table-toolbar"><div className="listing-search"><Search size={16} /><input value={query} maxLength={TEXT_MAX_LENGTH} onChange={(event) => setQuery(limitText(event.target.value))} placeholder="Buscar por cliente, salón, pago o Stripe" /></div><select className="status-select" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>{paymentStatusOptions.map((status) => <option value={status} key={status}>{status === 'todos' ? 'Todos los estados' : status}</option>)}</select></div><Table columns={columns} rows={rows} /></div><InfoNote tone="lilac" icon={ShieldCheck}>Los estados pagados se confirman exclusivamente mediante el webhook firmado de Stripe.</InfoNote></AnimatedPage>
 }
 
 export function AdminReportsPage() {
@@ -1131,7 +1198,6 @@ export function AdminReportsPage() {
         title="Reportes simples"
         description="Una lectura rápida del rendimiento real de espacios y reservas."
         crumbs={[{ label: 'Admin', to: '/admin' }, { label: 'Reportes' }]}
-        actions={<Button variant="secondary" icon={Download} disabled title="Descarga de CSV disponible próximamente">CSV próximamente</Button>}
       />
       <div className="report-hero">
         <div>
@@ -1147,7 +1213,7 @@ export function AdminReportsPage() {
           <div className="table-toolbar table-toolbar--stack">
             <div className="listing-search">
               <Search size={16} />
-              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar por salón, ubicación, tipo o monto" />
+              <input value={query} maxLength={TEXT_MAX_LENGTH} onChange={(event) => setQuery(limitText(event.target.value))} placeholder="Buscar por salón, ubicación, tipo o monto" />
             </div>
             <Badge tone="neutral">{reportRows.length} salones</Badge>
           </div>

@@ -18,13 +18,12 @@ import {
   Moon,
   PanelLeftClose,
   PanelLeftOpen,
-  Plus,
   Sparkles,
   Store,
   Users,
   X,
 } from 'lucide-react'
-import { BrandMark, Button, formatDate } from './ui'
+import { BrandMark, formatDate } from './ui'
 import { useApp } from '../context/AppContext'
 
 const panelConfig = {
@@ -76,7 +75,7 @@ export function PublicLayout() {
           <Link to="/#como-funciona" onClick={() => setMenuOpen(false)}>Cómo funciona</Link>
           <Link to="/#inspiracion" onClick={() => setMenuOpen(false)}>Inspiración</Link>
         </nav>
-        <div className="public-header__actions"><Link to={accountPath} className="user-pill"><span><CircleUserRound size={16} /></span><strong>{accountLabel}</strong></Link>{!currentUser && <Link to="/registro" className="header-register-link">Crear cuenta</Link>}<Button to="/salones" size="sm" icon={Plus}>Publicar espacio</Button></div>
+        <div className="public-header__actions"><Link to={accountPath} className="user-pill"><span><CircleUserRound size={16} /></span><strong>{accountLabel}</strong></Link>{!currentUser && <Link to="/registro" className="header-register-link">Crear cuenta</Link>}</div>
         <button type="button" className="mobile-menu" aria-label="Abrir menú" onClick={() => setMenuOpen((open) => !open)}>{menuOpen ? <X size={20} /> : <Menu size={20} />}</button>
       </div>
     </header>

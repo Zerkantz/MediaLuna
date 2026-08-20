@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { StreamChat } from 'stream-chat'
 import { AlertCircle, Loader2, MessageCircle, Send } from 'lucide-react'
 import { createStreamChannel, getStreamToken } from '../services/backendService'
+import { TEXT_MAX_LENGTH, limitText } from '../utils/formLimits'
 
 export function StreamChatWidget({ reservation, currentUser, counterpartName, counterpartRole, onMessageSent }) {
   const [channel, setChannel] = useState(null)
@@ -186,7 +187,8 @@ export function StreamChatWidget({ reservation, currentUser, counterpartName, co
           type="text"
           placeholder="Escribe un mensaje…"
           value={inputText}
-          onChange={(e) => setInputText(e.target.value)}
+          maxLength={TEXT_MAX_LENGTH}
+          onChange={(e) => setInputText(limitText(e.target.value))}
           disabled={loading || sending || !channel}
         />
         <button type="submit" disabled={loading || sending || !channel || !inputText.trim()} className="chat-send-button">
