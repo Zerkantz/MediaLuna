@@ -1,19 +1,26 @@
-import { createContext, useContext, useEffect, useState } from 'react'
+import { createContext, useContext, useEffect, useRef, useState } from 'react'
 import { addDays, format } from 'date-fns'
 import { es } from 'date-fns/locale'
 import {
   actualizarDisponibilidad,
+  actualizarNotificacion,
+  actualizarPago,
+  actualizarPagoPorReservacion,
   actualizarReservacion,
   actualizarSalon,
   actualizarServicio,
   actualizarUsuario,
   crearDisponibilidad,
+  crearNotificacion,
   crearPago,
   crearReservacion,
   crearSalon,
   crearServicio,
   crearUsuario,
   getDatabaseSnapshot,
+  getNotificaciones,
+  getNotificacionesParaUsuario,
+  getPagoPorReservacion,
   mergeAvailabilityIntoSalons,
 } from '../services/firestoreService'
 import { cloneMockDatabase } from '../data/mockData'
@@ -21,6 +28,8 @@ import { firebaseConfigured } from '../services/firebaseClient'
 import {
   getFirebaseUserProfile,
   registerWithFirebase,
+  reloadFirebaseUser,
+  resendVerificationEmail as resendFirebaseVerificationEmail,
   signInWithFirebase,
   signOutFromFirebase,
   subscribeToAuthState,
@@ -43,11 +52,16 @@ const getInitialDate = () => format(addDays(new Date(), 7), 'yyyy-MM-dd')
 const PENDING_IDENTIFIER = 'pendiente'
 const STRIPE_PENDING_MESSAGE = 'Reservación creada. Pago pendiente de conexión con Stripe.'
 const TERMS_VERSION = '2026-08-18'
+const EMAIL_NOT_VERIFIED_MESSAGE = 'Tu correo aún no está verificado. Revisa tu correo antes de iniciar sesión.'
 
 const syncSalonAvailability = (nextData) => ({
   ...nextData,
   salones: mergeAvailabilityIntoSalons(nextData.salones, nextData.disponibilidad),
 })
+
+const removeUndefinedFields = (record) => Object.fromEntries(
+  Object.entries(record).filter(([, value]) => value !== undefined),
+)
 
 const findAvailabilityForSalonDate = (records, salonId, date) => records.find((item) => (
   item.fecha === date && item.salonesIds?.includes(salonId)
@@ -56,6 +70,22 @@ const findAvailabilityForSalonDate = (records, salonId, date) => records.find((i
 const findSalonOwner = (usuarios, salon) => usuarios.find((user) => (
   user.rol === 'dueno' && (user.id === salon?.duenoId || user.id === salon?.ownerId || user.salonesIds?.includes(salon?.id))
 ))
+const getReservationOwnerId = (reservation, salones, usuarios) => {
+  const explicitOwnerId = Array.isArray(reservation?.duenoId) ? reservation.duenoId[0] : reservation?.duenoId
+  if (explicitOwnerId) return explicitOwnerId
+  const salon = salones.find((item) => reservation?.salonesIds?.includes(item.id))
+  return salon?.duenoId ?? salon?.ownerId ?? findSalonOwner(usuarios, salon)?.id ?? ''
+}
+const getReservationSalon = (reservation, salones) => salones.find((item) => reservation?.salonesIds?.includes(item.id))
+const notificationBelongsToUser = (notification, user) => Boolean(user) && (
+  notification.usuarioId === user.id || (!notification.usuarioId && notification.rolDestino === user.rol)
+)
+const getDateTime = (value) => {
+  if (typeof value?.toDate === 'function') return value.toDate().getTime()
+  const time = new Date(value ?? 0).getTime()
+  return Number.isFinite(time) ? time : 0
+}
+const sortNotifications = (items) => [...items].sort((a, b) => getDateTime(b.fechaCreacion) - getDateTime(a.fechaCreacion))
 
 const getAuthErrorMessage = (error) => {
   const messages = {
@@ -79,6 +109,10 @@ export function AppProvider({ children }) {
   const [authReady, setAuthReady] = useState(!firebaseConfigured)
   const [bookingDraft, setBookingDraft] = useState({ salonId: 'salon_aurora', date: getInitialDate(), servicesIds: [] })
   const [toast, setToast] = useState(null)
+  const notificationDedupeRef = useRef(new Map())
+  const verificationAuthFlowRef = useRef(false)
+  const currentUserId = currentUser?.id
+  const currentUserRole = currentUser?.rol
 
   const notify = (message, tone = 'success') => {
     setToast({ message, tone })
@@ -86,6 +120,21 @@ export function AppProvider({ children }) {
   }
 
   const refreshData = (nextData) => setData(syncSalonAvailability(nextData))
+
+  const markProfileEmailVerified = async (profile) => {
+    if (!firebaseConfigured || !profile || profile.correoVerificado === true) return profile
+    try {
+      const updated = await actualizarUsuario(profile.id, { correoVerificado: true })
+      setData((currentData) => syncSalonAvailability({
+        ...currentData,
+        usuarios: currentData.usuarios.map((item) => item.id === profile.id ? updated : item),
+      }))
+      return updated
+    } catch (error) {
+      console.warn('No se pudo sincronizar usuarios.correoVerificado:', error)
+      return { ...profile, correoVerificado: true }
+    }
+  }
 
   useEffect(() => {
     if (!firebaseConfigured) return undefined
@@ -132,6 +181,20 @@ export function AppProvider({ children }) {
       }
 
       try {
+        await reloadFirebaseUser(authUser)
+        if (cancelled) return
+        if (!authUser.emailVerified) {
+          if (verificationAuthFlowRef.current) {
+            setCurrentUser(null)
+            return
+          }
+          await signOutFromFirebase()
+          setCurrentUser(null)
+          setToast({ message: EMAIL_NOT_VERIFIED_MESSAGE, tone: 'warning' })
+          window.setTimeout(() => setToast(null), 4200)
+          return
+        }
+
         const profile = await getFirebaseUserProfile(authUser.uid)
         if (cancelled) return
         if (!profile) {
@@ -144,7 +207,8 @@ export function AppProvider({ children }) {
           setToast({ message: 'Esta cuenta está desactivada.', tone: 'warning' })
           window.setTimeout(() => setToast(null), 4200)
         } else {
-          setCurrentUser(profile)
+          const verifiedProfile = await markProfileEmailVerified(profile)
+          if (!cancelled) setCurrentUser(verifiedProfile)
         }
       } catch (error) {
         console.error('No se pudo cargar el perfil autenticado:', error)
@@ -161,6 +225,20 @@ export function AppProvider({ children }) {
       unsubscribe()
     }
   }, [])
+
+  useEffect(() => {
+    if (!currentUserId) return undefined
+    let cancelled = false
+    getNotificacionesParaUsuario({ id: currentUserId, rol: currentUserRole })
+      .then((notificaciones) => {
+        if (cancelled) return
+        setData((currentData) => ({ ...currentData, notificaciones }))
+      })
+      .catch((error) => {
+        console.warn('No se pudieron cargar notificaciones del usuario:', error)
+      })
+    return () => { cancelled = true }
+  }, [currentUserId, currentUserRole])
 
   const loginAs = (role) => {
     if (firebaseConfigured) {
@@ -180,6 +258,17 @@ export function AppProvider({ children }) {
     if (firebaseConfigured) {
       try {
         const credential = await signInWithFirebase(normalizedEmail, password)
+        await reloadFirebaseUser(credential.user)
+        if (!credential.user.emailVerified) {
+          await signOutFromFirebase()
+          return {
+            ok: false,
+            code: 'email-not-verified',
+            canResendVerification: true,
+            message: EMAIL_NOT_VERIFIED_MESSAGE,
+          }
+        }
+
         const profile = await getFirebaseUserProfile(credential.user.uid)
         if (!profile) {
           await signOutFromFirebase()
@@ -189,9 +278,10 @@ export function AppProvider({ children }) {
           await signOutFromFirebase()
           return { ok: false, message: 'Esta cuenta está desactivada. Contacta a MediaLuna.' }
         }
-        setCurrentUser(profile)
-        notify(`Bienvenido de vuelta, ${profile.nombre.split(' ')[0]}`)
-        return { ok: true, user: profile }
+        const verifiedProfile = await markProfileEmailVerified(profile)
+        setCurrentUser(verifiedProfile)
+        notify(`Bienvenido de vuelta, ${verifiedProfile.nombre.split(' ')[0]}`)
+        return { ok: true, user: verifiedProfile }
       } catch (error) {
         return { ok: false, message: getAuthErrorMessage(error) }
       }
@@ -212,18 +302,25 @@ export function AppProvider({ children }) {
 
     if (firebaseConfigured) {
       try {
+        verificationAuthFlowRef.current = true
         const result = await registerWithFirebase({
           nombre: nombre.trim(),
           correo: normalizedEmail,
           telefono: telefono.trim(),
           password,
         })
-        refreshData({ ...data, usuarios: [...data.usuarios, result.profile] })
-        setCurrentUser(result.profile)
-        notify('Cuenta creada. Bienvenido a MediaLuna.')
-        return { ok: true, user: result.profile }
+        const usuarios = data.usuarios.some((item) => item.id === result.profile.id)
+          ? data.usuarios.map((item) => item.id === result.profile.id ? result.profile : item)
+          : [...data.usuarios, result.profile]
+        refreshData({ ...data, usuarios })
+        await signOutFromFirebase()
+        setCurrentUser(null)
+        notify('Te enviamos un correo de verificación.', 'info')
+        return { ok: true, user: result.profile, verificationSent: true }
       } catch (error) {
         return { ok: false, message: getAuthErrorMessage(error) }
+      } finally {
+        verificationAuthFlowRef.current = false
       }
     }
 
@@ -243,6 +340,22 @@ export function AppProvider({ children }) {
     setCurrentUser(created)
     notify('Cuenta creada. Bienvenido a MediaLuna.')
     return { ok: true, user: created }
+  }
+
+  const resendVerificationEmail = async (correo, password) => {
+    if (!firebaseConfigured) return { ok: false, message: 'El reenvío de verificación requiere Firebase Authentication.' }
+    const normalizedEmail = correo.trim().toLowerCase()
+    try {
+      verificationAuthFlowRef.current = true
+      const result = await resendFirebaseVerificationEmail(normalizedEmail, password)
+      return result.verified
+        ? { ok: true, verified: true, message: 'Cuenta verificada. Ya puedes iniciar sesión.' }
+        : { ok: true, message: 'Te enviamos otro correo de verificación.' }
+    } catch (error) {
+      return { ok: false, message: getAuthErrorMessage(error) }
+    } finally {
+      verificationAuthFlowRef.current = false
+    }
   }
 
   const logout = async () => {
@@ -359,11 +472,278 @@ export function AppProvider({ children }) {
     return updated
   }
 
+  const refreshNotifications = async () => {
+    try {
+      const notificaciones = currentUser
+        ? await getNotificacionesParaUsuario(currentUser)
+        : await getNotificaciones()
+      setData((currentData) => ({ ...currentData, notificaciones }))
+      return notificaciones
+    } catch (error) {
+      console.warn('No se pudieron refrescar notificaciones:', error)
+      return data.notificaciones ?? []
+    }
+  }
+
+  const createNotification = async (notification, options = {}) => {
+    const payload = {
+      usuarioId: notification.usuarioId ?? '',
+      rolDestino: notification.rolDestino ?? '',
+      tipo: notification.tipo ?? 'general',
+      titulo: notification.titulo ?? 'Notificación',
+      mensaje: notification.mensaje ?? '',
+      reservacionId: notification.reservacionId ?? '',
+      salonId: notification.salonId ?? '',
+      leida: false,
+      fechaCreacion: format(new Date(), 'yyyy-MM-dd'),
+    }
+    if (!payload.usuarioId && !payload.rolDestino) return null
+
+    const dedupeKey = options.dedupeKey ?? [
+      payload.usuarioId,
+      payload.rolDestino,
+      payload.tipo,
+      payload.reservacionId,
+      payload.salonId,
+      payload.titulo,
+      payload.mensaje,
+    ].join('|')
+    const dedupeWindowMs = options.dedupeWindowMs ?? 4500
+    const now = Date.now()
+    const lastCreatedAt = notificationDedupeRef.current.get(dedupeKey)
+    if (lastCreatedAt && now - lastCreatedAt < dedupeWindowMs) return null
+    notificationDedupeRef.current.set(dedupeKey, now)
+
+    try {
+      const created = await crearNotificacion(payload)
+      setData((currentData) => ({
+        ...currentData,
+        notificaciones: [created, ...(currentData.notificaciones ?? [])],
+      }))
+      return created
+    } catch (error) {
+      console.error('No se pudo crear la notificación:', error)
+      return null
+    }
+  }
+
+  const createAdminNotifications = async (notification, options = {}) => {
+    const admins = data.usuarios.filter((user) => user.rol === 'administrador' && user.activo !== false)
+    const recipients = admins.length ? admins : [{ id: '', rol: 'administrador' }]
+    await Promise.all(recipients.map((admin) => createNotification({
+      ...notification,
+      usuarioId: admin.id,
+      rolDestino: 'administrador',
+    }, {
+      ...options,
+      dedupeKey: `${options.dedupeKey ?? notification.tipo}-${admin.id || 'rol-admin'}`,
+    })))
+  }
+
+  const notifyReservationCreated = async (reservation, salon, client) => {
+    const ownerId = getReservationOwnerId(reservation, data.salones, data.usuarios)
+    const salonId = salon?.id ?? reservation.salonesIds?.[0] ?? ''
+    const salonName = salon?.name ?? 'un salón'
+    const clientName = client?.nombre ?? 'Un cliente'
+    await Promise.all([
+      ownerId ? createNotification({
+        usuarioId: ownerId,
+        rolDestino: 'dueno',
+        tipo: 'reservacion_creada',
+        titulo: 'Nueva reservación',
+        mensaje: `${clientName} hizo una reservación para ${salonName}.`,
+        reservacionId: reservation.id,
+        salonId,
+      }, { dedupeKey: `reservacion-creada-dueno-${reservation.id}` }) : Promise.resolve(null),
+      createAdminNotifications({
+        tipo: 'reservacion_creada',
+        titulo: 'Nueva reservación',
+        mensaje: `${clientName} hizo una reservación para ${salonName}.`,
+        reservacionId: reservation.id,
+        salonId,
+      }, { dedupeKey: `reservacion-creada-admin-${reservation.id}` }),
+    ])
+  }
+
+  const notifyReservationStatusChanged = async (reservation, previousStatus) => {
+    const status = reservation.estadoReservacion ?? 'actualizada'
+    if (previousStatus === status) return
+    const salon = getReservationSalon(reservation, data.salones)
+    const ownerId = getReservationOwnerId(reservation, data.salones, data.usuarios)
+    const client = data.usuarios.find((user) => user.id === reservation.clienteId)
+    const salonId = salon?.id ?? reservation.salonesIds?.[0] ?? ''
+    const salonName = salon?.name ?? 'tu salón'
+    const clientName = client?.nombre ?? 'Un cliente'
+    const tasks = [
+      reservation.clienteId ? createNotification({
+        usuarioId: reservation.clienteId,
+        rolDestino: 'cliente',
+        tipo: 'estado_reservacion',
+        titulo: `Tu reservación cambió a ${status}`,
+        mensaje: `Tu reservación para ${salonName} cambió a ${status}.`,
+        reservacionId: reservation.id,
+        salonId,
+      }, { dedupeKey: `estado-cliente-${reservation.id}-${status}` }) : Promise.resolve(null),
+      createAdminNotifications({
+        tipo: 'estado_reservacion',
+        titulo: 'Estado de reservación actualizado',
+        mensaje: `La reservación de ${clientName} para ${salonName} cambió de ${previousStatus ?? 'sin estado'} a ${status}.`,
+        reservacionId: reservation.id,
+        salonId,
+      }, { dedupeKey: `estado-admin-${reservation.id}-${status}` }),
+    ]
+
+    if (status === 'cancelada' && ownerId) {
+      tasks.push(createNotification({
+        usuarioId: ownerId,
+        rolDestino: 'dueno',
+        tipo: 'reservacion_cancelada',
+        titulo: 'Reservación cancelada',
+        mensaje: `${clientName} canceló la reservación para ${salonName}.`,
+        reservacionId: reservation.id,
+        salonId,
+      }, { dedupeKey: `cancelada-dueno-${reservation.id}` }))
+    }
+
+    await Promise.all(tasks)
+  }
+
+  const notifyMessageSent = async (reservation, text = '') => {
+    if (!currentUser || !reservation) return null
+    const ownerId = getReservationOwnerId(reservation, data.salones, data.usuarios)
+    const salon = getReservationSalon(reservation, data.salones)
+    const salonId = salon?.id ?? reservation.salonesIds?.[0] ?? ''
+    const salonName = salon?.name ?? 'tu reservación'
+    const isClientSender = currentUser.id === reservation.clienteId
+    const isOwnerSender = currentUser.id === ownerId || currentUser.rol === 'dueno'
+    if (!isClientSender && !isOwnerSender) return null
+
+    const targetId = isClientSender ? ownerId : reservation.clienteId
+    if (!targetId || targetId === currentUser.id) return null
+    return createNotification({
+      usuarioId: targetId,
+      rolDestino: isClientSender ? 'dueno' : 'cliente',
+      tipo: 'mensaje_chat',
+      titulo: isClientSender ? 'Nuevo mensaje del cliente' : 'Nuevo mensaje del dueño',
+      mensaje: `${currentUser.nombre ?? 'Un usuario'} te escribió sobre ${salonName}.`,
+      reservacionId: reservation.id,
+      salonId,
+    }, {
+      dedupeKey: `mensaje-${reservation.id}-${currentUser.id}-${targetId}-${text.trim()}`,
+      dedupeWindowMs: 3500,
+    })
+  }
+
+  const notifyVideoCallStarted = async (reservation) => {
+    if (!currentUser || !reservation) return null
+    const ownerId = getReservationOwnerId(reservation, data.salones, data.usuarios)
+    const salon = getReservationSalon(reservation, data.salones)
+    const salonId = salon?.id ?? reservation.salonesIds?.[0] ?? ''
+    const salonName = salon?.name ?? 'tu reservación'
+    const isClientStarter = currentUser.id === reservation.clienteId
+    const isOwnerStarter = currentUser.id === ownerId || currentUser.rol === 'dueno'
+    if (!isClientStarter && !isOwnerStarter) return null
+
+    const targetId = isClientStarter ? ownerId : reservation.clienteId
+    if (!targetId || targetId === currentUser.id) return null
+    return createNotification({
+      usuarioId: targetId,
+      rolDestino: isClientStarter ? 'dueno' : 'cliente',
+      tipo: 'videollamada',
+      titulo: isClientStarter ? 'El cliente inició una videollamada' : 'El dueño inició una videollamada',
+      mensaje: `${currentUser.nombre ?? 'Un usuario'} abrió la videollamada de ${salonName}.`,
+      reservacionId: reservation.id,
+      salonId,
+    }, {
+      dedupeKey: `video-${reservation.id}-${currentUser.id}-${targetId}`,
+      dedupeWindowMs: 15000,
+    })
+  }
+
   const updateReservationStatus = async (id, estadoReservacion) => {
+    const previous = data.reservaciones.find((item) => item.id === id)
     const updated = await actualizarReservacion(id, { estadoReservacion })
     refreshData({ ...data, reservaciones: data.reservaciones.map((item) => item.id === id ? updated : item) })
+    await notifyReservationStatusChanged(updated, previous?.estadoReservacion)
     notify(`Reservación marcada como ${estadoReservacion}`, 'info')
     return updated
+  }
+
+  const cancelReservation = async (id) => {
+    const reservation = data.reservaciones.find((item) => item.id === id)
+    if (!reservation) return { ok: false, message: 'Reservación no encontrada.' }
+    if (reservation.clienteId !== currentUser?.id) return { ok: false, message: 'Solo el cliente de la reservación puede cancelarla.' }
+    if (reservation.estadoReservacion === 'cancelada') return { ok: true, reservation, message: 'La reservación ya estaba cancelada.' }
+
+    const updated = await actualizarReservacion(id, { estadoReservacion: 'cancelada' })
+    refreshData({ ...data, reservaciones: data.reservaciones.map((item) => item.id === id ? updated : item) })
+
+    const salon = getReservationSalon(updated, data.salones)
+    const ownerId = getReservationOwnerId(updated, data.salones, data.usuarios)
+    const salonId = salon?.id ?? updated.salonesIds?.[0] ?? ''
+    const salonName = salon?.name ?? 'tu salón'
+    const clientName = currentUser?.nombre ?? 'Un cliente'
+    await Promise.all([
+      ownerId ? createNotification({
+        usuarioId: ownerId,
+        rolDestino: 'dueno',
+        tipo: 'reservacion_cancelada',
+        titulo: 'Reservación cancelada',
+        mensaje: `${clientName} canceló la reservación para ${salonName}.`,
+        reservacionId: updated.id,
+        salonId,
+      }, { dedupeKey: `cancelacion-cliente-dueno-${updated.id}` }) : Promise.resolve(null),
+      createAdminNotifications({
+        tipo: 'reservacion_cancelada',
+        titulo: 'Reservación cancelada',
+        mensaje: `${clientName} canceló la reservación para ${salonName}.`,
+        reservacionId: updated.id,
+        salonId,
+      }, { dedupeKey: `cancelacion-cliente-admin-${updated.id}` }),
+    ])
+
+    const message = reservation.estadoPago === 'pagado'
+      ? 'Reservación cancelada. El pago ya realizado no fue reembolsado automáticamente.'
+      : 'Reservación cancelada.'
+    notify(message, 'info')
+    return { ok: true, reservation: updated, message }
+  }
+
+  const saveStripeSessionReference = async ({ reservationId, paymentId, sessionId }) => {
+    if (!reservationId || !sessionId) return null
+
+    try {
+      const paymentUpdates = {
+        identificadorPagoStripe: sessionId,
+        identificadorSesionStripe: sessionId,
+      }
+      const [updatedReservation, updatedPayment] = await Promise.all([
+        actualizarReservacion(reservationId, { identificadorPagoStripe: sessionId }),
+        paymentId
+          ? actualizarPago(paymentId, paymentUpdates).catch((error) => {
+            console.warn('No se pudo guardar sessionId por pagoId; se intentará por reservacionId:', error)
+            return actualizarPagoPorReservacion(reservationId, paymentUpdates)
+          })
+          : actualizarPagoPorReservacion(reservationId, paymentUpdates),
+      ])
+
+      setData((currentData) => syncSalonAvailability({
+        ...currentData,
+        pagos: updatedPayment
+          ? currentData.pagos.some((item) => item.id === updatedPayment.id)
+            ? currentData.pagos.map((item) => (item.id === updatedPayment.id ? updatedPayment : item))
+            : [...currentData.pagos, updatedPayment]
+          : currentData.pagos,
+        reservaciones: currentData.reservaciones.map((item) => (
+          item.id === updatedReservation.id ? { ...item, ...updatedReservation } : item
+        )),
+      }))
+
+      return { reservation: updatedReservation, payment: updatedPayment }
+    } catch (error) {
+      console.warn('No se pudo guardar la referencia de la sesión de Stripe:', error)
+      return null
+    }
   }
 
   const selectSalon = (salonId) => setBookingDraft((draft) => ({ ...draft, salonId }))
@@ -441,6 +821,7 @@ export function AppProvider({ children }) {
 
     const disponibilidad = data.disponibilidad.map((item) => item.id === selectedAvailability.id ? updatedAvailability : item)
     refreshData({ ...data, disponibilidad, reservaciones: [...data.reservaciones, reservation], pagos: [...data.pagos, payment] })
+    await notifyReservationCreated(reservation, salon, currentUser)
 
     if (!firebaseConfigured) {
       notify(STRIPE_PENDING_MESSAGE, 'warning')
@@ -449,8 +830,17 @@ export function AppProvider({ children }) {
 
     console.log('[reservaciones] iniciando stripe')
     try {
-      const checkout = await createStripeCheckout({ reservationId: reservation.id })
+      const checkout = await createStripeCheckout({
+        reservationId: reservation.id,
+        paymentId: payment.id,
+        total,
+      })
       if (!checkout.url) throw new Error('Stripe no devolvió una URL de pago válida.')
+      await saveStripeSessionReference({
+        reservationId: reservation.id,
+        paymentId: payment.id,
+        sessionId: checkout.sessionId,
+      })
       return {
         ok: true,
         checkoutUrl: checkout.url,
@@ -475,11 +865,14 @@ export function AppProvider({ children }) {
       const reservacion = data.reservaciones.find((item) => item.id === reservationId)
       if (!reservacion) return { ok: false, message: 'Reservación no encontrada.' }
 
+      const pago = data.pagos.find((item) => item.reservacionId === reservacion.id)
+        ?? await getPagoPorReservacion(reservacion.id)
       const total = Number(
-        reservacion.total ?? (Number(reservacion.precioSalon || 0) + Number(reservacion.totalServicios || 0)),
+        pago?.monto ?? reservacion.total ?? (Number(reservacion.precioSalon || 0) + Number(reservacion.totalServicios || 0)),
       )
       const payload = {
         reservationId: reservacion.id,
+        paymentId: pago?.id,
         total,
       }
 
@@ -495,13 +888,14 @@ export function AppProvider({ children }) {
       const checkout = await createStripeCheckout(payload)
       console.log('Respuesta backend Stripe:', checkout)
       if (checkout.status === 'paid') {
-        if (checkout.payment && checkout.reservation) {
-          refreshData({
-            ...data,
-            pagos: data.pagos.map((item) => item.id === checkout.payment.id ? { ...item, ...checkout.payment } : item),
-            reservaciones: data.reservaciones.map((item) => item.id === checkout.reservation.id ? { ...item, ...checkout.reservation } : item),
-          })
-        }
+        const checkoutPayment = checkout.payment ?? checkout.pago
+        const checkoutReservation = checkout.reservation ?? checkout.reservacion
+        await markStripePaymentAsPaid({
+          sessionId: checkout.sessionId ?? checkoutPayment?.identificadorSesionStripe ?? checkoutPayment?.identificadorPagoStripe ?? reservacion.identificadorPagoStripe,
+          reservationId: reservacion.id,
+          payment: checkoutPayment,
+          reservation: checkoutReservation,
+        })
         notify('Este pago ya fue confirmado por Stripe.')
         return { ok: true, paid: true }
       }
@@ -510,6 +904,11 @@ export function AppProvider({ children }) {
         return { ok: true, processing: true }
       }
       if (!checkout.url) return { ok: false, message: 'Stripe no devolvió una URL de pago válida.' }
+      await saveStripeSessionReference({
+        reservationId: reservacion.id,
+        paymentId: pago?.id ?? checkout.paymentId,
+        sessionId: checkout.sessionId,
+      })
       window.location.assign(checkout.url)
       return { ok: true }
     } catch (error) {
@@ -518,21 +917,125 @@ export function AppProvider({ children }) {
     }
   }
 
-  const confirmStripePayment = async (sessionId) => {
+  const markStripePaymentAsPaid = async ({ sessionId, reservationId, payment, reservation }) => {
+    const resolvedReservationId = reservation?.id ?? payment?.reservacionId ?? reservationId
+    if (!resolvedReservationId) return { ok: false, message: 'No se pudo identificar la reservación pagada.' }
+
+    const explicitPaymentId = payment?.id && payment.id !== resolvedReservationId ? payment.id : null
+    const currentPayment = data.pagos.find((item) => (
+      item.id === explicitPaymentId || item.reservacionId === resolvedReservationId
+    ))
+    const storedPayment = currentPayment ?? await getPagoPorReservacion(resolvedReservationId)
+    const paymentId = explicitPaymentId ?? storedPayment?.id
+    const fechaPago = format(new Date(), 'yyyy-MM-dd')
+    const stripeIdentifier = sessionId
+      ?? payment?.identificadorSesionStripe
+      ?? payment?.identificadorPagoStripe
+      ?? reservation?.identificadorPagoStripe
+
+    let updatedPayment = null
+    const paymentUpdates = removeUndefinedFields({
+      estadoPago: 'pagado',
+      fechaPago,
+      identificadorPagoStripe: stripeIdentifier,
+      identificadorSesionStripe: sessionId ?? stripeIdentifier,
+    })
+
+    if (paymentId) {
+      try {
+        updatedPayment = await actualizarPago(paymentId, paymentUpdates)
+      } catch (error) {
+        console.warn('No se pudo actualizar pagos por pagoId; se intentará por reservacionId:', error)
+        updatedPayment = await actualizarPagoPorReservacion(resolvedReservationId, paymentUpdates)
+      }
+    } else {
+      updatedPayment = await actualizarPagoPorReservacion(resolvedReservationId, paymentUpdates)
+    }
+
+    if (!updatedPayment) {
+      console.warn('No se encontró documento en pagos para la reservación pagada:', resolvedReservationId)
+    }
+
+    const updatedReservation = await actualizarReservacion(resolvedReservationId, removeUndefinedFields({
+      estadoPago: 'pagado',
+      identificadorPagoStripe: stripeIdentifier,
+    }))
+
+    setData((currentData) => syncSalonAvailability({
+      ...currentData,
+      pagos: updatedPayment
+        ? currentData.pagos.some((item) => item.id === updatedPayment.id)
+          ? currentData.pagos.map((item) => (
+            item.id === updatedPayment.id ? { ...item, ...payment, ...updatedPayment } : item
+          ))
+          : [...currentData.pagos, updatedPayment]
+        : currentData.pagos,
+      reservaciones: currentData.reservaciones.map((item) => (
+        item.id === updatedReservation.id ? { ...item, ...reservation, ...updatedReservation } : item
+      )),
+    }))
+    return { ok: true }
+  }
+
+  const confirmStripePayment = async (sessionId, reservationId) => {
     try {
-      const result = await syncStripeCheckout(sessionId)
-      if (result.status !== 'paid' || !result.payment || !result.reservation) {
+      const result = await syncStripeCheckout(sessionId).catch((error) => {
+        console.warn('No se pudo consultar Stripe; se usará el session_id del redirect:', error)
+        return null
+      })
+      const paidStatuses = ['paid', 'pagado', 'succeeded', 'complete']
+      const resultPayment = result?.payment ?? result?.pago
+      const resultReservation = result?.reservation ?? result?.reservacion
+      const statusCandidates = [
+        result?.status,
+        result?.paymentStatus,
+        result?.payment_status,
+        result?.session?.payment_status,
+        result?.session?.status,
+        resultPayment?.estadoPago,
+        resultReservation?.estadoPago,
+      ].filter(Boolean).map((status) => String(status).toLowerCase())
+      const isPaid = !result || statusCandidates.some((status) => paidStatuses.includes(status))
+
+      if (!isPaid) {
         return { ok: false, message: 'Stripe todavía no confirma el pago.' }
       }
-      setData((currentData) => syncSalonAvailability({
-        ...currentData,
-        pagos: currentData.pagos.map((item) => item.id === result.payment.id ? { ...item, ...result.payment } : item),
-        reservaciones: currentData.reservaciones.map((item) => item.id === result.reservation.id ? { ...item, ...result.reservation } : item),
-      }))
-      return { ok: true }
+      return markStripePaymentAsPaid({
+        sessionId,
+        reservationId,
+        payment: resultPayment,
+        reservation: resultReservation,
+      })
     } catch (error) {
       return { ok: false, message: error.message }
     }
+  }
+
+  const currentUserNotifications = sortNotifications((data.notificaciones ?? []).filter((notification) => (
+    notificationBelongsToUser(notification, currentUser)
+  )))
+  const unreadNotificationsCount = currentUserNotifications.filter((notification) => !notification.leida).length
+
+  const markNotificationRead = async (id) => {
+    const notification = (data.notificaciones ?? []).find((item) => item.id === id)
+    if (!notification || notification.leida) return null
+    try {
+      const updated = await actualizarNotificacion(id, { leida: true })
+      setData((currentData) => ({
+        ...currentData,
+        notificaciones: (currentData.notificaciones ?? []).map((item) => item.id === id ? updated : item),
+      }))
+      return updated
+    } catch (error) {
+      console.error('No se pudo marcar la notificación como leída:', error)
+      notify('No se pudo marcar la notificación como leída.', 'warning')
+      return null
+    }
+  }
+
+  const markAllNotificationsRead = async () => {
+    const unread = currentUserNotifications.filter((notification) => !notification.leida)
+    await Promise.all(unread.map((notification) => markNotificationRead(notification.id)))
   }
 
   const value = {
@@ -550,6 +1053,7 @@ export function AppProvider({ children }) {
     loginAs,
     loginWithCredentials,
     registerClient,
+    resendVerificationEmail,
     logout,
     createUser,
     toggleUser,
@@ -561,12 +1065,20 @@ export function AppProvider({ children }) {
     createAvailability,
     updateAvailability,
     updateReservationStatus,
+    cancelReservation,
     selectSalon,
     selectDate,
     toggleService,
     createReservation,
     startStripePayment,
     confirmStripePayment,
+    currentUserNotifications,
+    unreadNotificationsCount,
+    refreshNotifications,
+    markNotificationRead,
+    markAllNotificationsRead,
+    notifyMessageSent,
+    notifyVideoCallStarted,
     dateLocale: es,
   }
 

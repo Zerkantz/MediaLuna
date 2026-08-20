@@ -288,6 +288,7 @@ export const mockDatabase = {
       tipoPago: 'total',
     },
   ],
+  notificaciones: [],
 }
 
 export const cloneMockDatabase = () => structuredClone(mockDatabase)

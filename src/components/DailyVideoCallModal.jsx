@@ -15,7 +15,7 @@ import {
 } from 'lucide-react'
 import { getDailyRoom, getDailyToken } from '../services/backendService'
 
-export function DailyVideoCallModal({ reservation, currentUser, onClose, onCallStateChange }) {
+export function DailyVideoCallModal({ reservation, currentUser, onClose, onCallStateChange, onCallStarted }) {
   const [callObject, setCallObject] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -28,6 +28,8 @@ export function DailyVideoCallModal({ reservation, currentUser, onClose, onCallS
   const containerRef = useRef(null)
   const onCloseRef = useRef(onClose)
   const onCallStateChangeRef = useRef(onCallStateChange)
+  const onCallStartedRef = useRef(onCallStarted)
+  const startedNotificationSentRef = useRef(false)
 
   const ownerId = Array.isArray(reservation.duenoId) ? reservation.duenoId[0] : (reservation.duenoId || '')
   const clientId = reservation.clienteId
@@ -45,7 +47,8 @@ export function DailyVideoCallModal({ reservation, currentUser, onClose, onCallS
   useEffect(() => {
     onCloseRef.current = onClose
     onCallStateChangeRef.current = onCallStateChange
-  }, [onClose, onCallStateChange])
+    onCallStartedRef.current = onCallStarted
+  }, [onClose, onCallStateChange, onCallStarted])
 
   useEffect(() => {
     if (!isParticipant) return
@@ -94,6 +97,10 @@ export function DailyVideoCallModal({ reservation, currentUser, onClose, onCallS
             setLoading(false)
             setCallStatus('en_curso')
             if (onCallStateChangeRef.current) onCallStateChangeRef.current('en_curso')
+            if (!startedNotificationSentRef.current) {
+              startedNotificationSentRef.current = true
+              onCallStartedRef.current?.()
+            }
           }
         })
 

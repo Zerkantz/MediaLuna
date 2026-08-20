@@ -3,11 +3,12 @@ import { StreamChat } from 'stream-chat'
 import { AlertCircle, Loader2, MessageCircle, Send } from 'lucide-react'
 import { createStreamChannel, getStreamToken } from '../services/backendService'
 
-export function StreamChatWidget({ reservation, currentUser, counterpartName, counterpartRole }) {
+export function StreamChatWidget({ reservation, currentUser, counterpartName, counterpartRole, onMessageSent }) {
   const [channel, setChannel] = useState(null)
   const [messages, setMessages] = useState([])
   const [inputText, setInputText] = useState('')
   const [loading, setLoading] = useState(true)
+  const [sending, setSending] = useState(false)
   const [error, setError] = useState(null)
   const messagesEndRef = useRef(null)
 
@@ -108,10 +109,14 @@ export function StreamChatWidget({ reservation, currentUser, counterpartName, co
     setInputText('')
 
     try {
-      await channel.sendMessage({ text })
+      setSending(true)
+      const result = await channel.sendMessage({ text })
+      await onMessageSent?.(text, result.message)
     } catch (err) {
       console.error('Error al enviar mensaje:', err)
       setError('No se pudo enviar el mensaje.')
+    } finally {
+      setSending(false)
     }
   }
 
@@ -182,9 +187,9 @@ export function StreamChatWidget({ reservation, currentUser, counterpartName, co
           placeholder="Escribe un mensaje…"
           value={inputText}
           onChange={(e) => setInputText(e.target.value)}
-          disabled={loading || !channel}
+          disabled={loading || sending || !channel}
         />
-        <button type="submit" disabled={loading || !channel || !inputText.trim()} className="chat-send-button">
+        <button type="submit" disabled={loading || sending || !channel || !inputText.trim()} className="chat-send-button">
           <Send size={16} />
         </button>
       </form>

@@ -38,17 +38,64 @@ import {
 } from '../components/ui'
 
 function SiteFooter() {
-  return <footer className="site-footer"><div className="container site-footer__grid"><div><Link to="/" className="footer-brand">media<em>luna</em></Link><p>Espacios con intención para celebrar lo que importa.</p></div><div><strong>Explora</strong><Link to="/salones">Salones</Link><Link to="/#como-funciona">Cómo funciona</Link></div><div><strong>Soporte</strong><a href="mailto:hola@medialuna.mx">hola@medialuna.mx</a><span>Hermosillo · Sonora</span></div><div><strong>Seguimos cerca</strong><div className="footer-social"><span>ig</span><span>in</span><span>f</span></div></div></div><div className="container site-footer__legal"><span>© 2026 MediaLuna</span><span>Privacidad · Términos</span></div></footer>
+  return (
+    <footer className="site-footer">
+      <div className="container site-footer__grid site-footer__grid--simple">
+        <div>
+          <Link to="/" className="footer-brand">media<em>luna</em></Link>
+          <p>Espacios con intención para celebrar lo que importa.</p>
+        </div>
+        <div>
+          <strong>Explora</strong>
+          <Link to="/salones">Salones</Link>
+          <Link to="/#como-funciona">Cómo funciona</Link>
+        </div>
+        <div>
+          <strong>Soporte</strong>
+          <a href="mailto:medialunasalones@gmail.com">medialunasalones@gmail.com</a>
+          <span>San Luis Río Colorado, Sonora</span>
+        </div>
+      </div>
+      <div className="container site-footer__legal">
+        <span>© 2026 MediaLuna</span>
+        <span>Privacidad · Términos</span>
+      </div>
+    </footer>
+  )
 }
 
 const isVisibleSalon = (salon) => salon?.estado !== 'archivado' && salon?.active !== false
+const isAvailableRecord = (item) => item?.estado === 'disponible'
+const availabilityBelongsToSalon = (item, salonId) => item.salonesIds?.includes(salonId)
+const salonHasAvailableDates = (data, salonId) => data.disponibilidad.some((item) => (
+  availabilityBelongsToSalon(item, salonId) && isAvailableRecord(item)
+))
+const salonIsAvailableOnDate = (data, salonId, date) => data.disponibilidad.some((item) => (
+  availabilityBelongsToSalon(item, salonId) && item.fecha === date && isAvailableRecord(item)
+))
+const getPaidReservationsForSalon = (data, salonId) => data.reservaciones.filter((reservation) => (
+  reservation.estadoPago === 'pagado' && reservation.salonesIds?.includes(salonId)
+))
+const getFeaturedSalons = (data) => {
+  const visibleSalons = data.salones.filter(isVisibleSalon)
+  const rankedByPaidReservations = visibleSalons
+    .map((salon) => ({ salon, paidCount: getPaidReservationsForSalon(data, salon.id).length }))
+    .filter((item) => item.paidCount > 0)
+    .sort((a, b) => b.paidCount - a.paidCount)
+    .slice(0, 3)
+    .map((item) => item.salon)
+
+  return rankedByPaidReservations.length
+    ? rankedByPaidReservations
+    : visibleSalons.filter((salon) => salonHasAvailableDates(data, salon.id)).slice(0, 3)
+}
 
 export function HomePage() {
   const navigate = useNavigate()
   const location = useLocation()
   const { data } = useApp()
   const [search, setSearch] = useState({ location: '', date: '', guests: '' })
-  const featured = data.salones.filter(isVisibleSalon).slice(0, 3)
+  const featured = getFeaturedSalons(data)
   useEffect(() => {
     if (!location.hash) return undefined
     const targetId = location.hash.slice(1)
@@ -66,7 +113,7 @@ export function HomePage() {
   return <AnimatedPage className="home-page">
     <section className="hero-section"><img className="hero-background" src="https://images.unsplash.com/photo-1519167758481-83f550bb49b3?auto=format&fit=crop&w=1800&q=88" alt="Salón de eventos preparado para celebración" /><div className="hero-overlay" /><div className="container hero-grid"><div className="hero-copy" data-reveal><div className="hero-kicker"><span className="kicker-dot" /> Salones, jardines y terrazas <Sparkles size={16} /></div><h1>Encuentra el espacio ideal para tu evento.</h1><p>MediaLuna reúne salones con personalidad, fechas disponibles y servicios para que organizar tu celebración sea claro desde el primer clic.</p><div className="hero-actions"><Button to="/salones" icon={ArrowRight}>Ver salones</Button><a className="text-link" href="#buscador-home"><CalendarDays size={18} /> Buscar fecha</a></div></div></div><div className="container hero-search-wrap" id="buscador-home" data-reveal><form className="hero-search" onSubmit={submitSearch}><div className="hero-search__field"><MapPin size={22} /><label>¿Dónde?</label><input value={search.location} onChange={(event) => setSearch({ ...search, location: event.target.value })} placeholder="Ciudad o zona" /></div><div className="hero-search__field"><CalendarDays size={22} /><label>¿Cuándo?</label><input type="date" value={search.date} onChange={(event) => setSearch({ ...search, date: event.target.value })} /></div><div className="hero-search__field"><UsersRound size={22} /><label>Invitados</label><input type="number" min="1" value={search.guests} onChange={(event) => setSearch({ ...search, guests: event.target.value })} placeholder="Número de personas" /></div><button type="submit" className="search-submit"><Search size={20} /><span>Buscar salones</span></button></form></div></section>
     <section className="home-intro container" id="como-funciona"><div className="home-intro__aside" data-reveal><span className="eyebrow">Una nueva forma de celebrar</span><h2>Menos pendientes.<br /><em>Más momentos.</em></h2></div><div className="home-intro__text" data-reveal><p>MediaLuna reúne espacios con personalidad y servicios que hacen que organizar tu evento se sienta tan bien como vivirlo.</p><div className="mini-points"><span><Check size={14} /> Espacios verificados</span><span><Check size={14} /> Reserva sin vueltas</span><span><Check size={14} /> Acompañamiento humano</span></div></div></section>
-    <section className="section container" id="inspiracion"><SectionTitle title="Espacios para tu momento" description="Una selección para empezar a imaginarlo." action={<Button to="/salones" variant="ghost" icon={ArrowRight}>Ver todos</Button>} /><div className="salon-grid salon-grid--featured">{featured.map((salon) => <SalonCard key={salon.id} salon={salon} featured />)}</div></section>
+    <section className="section container" id="inspiracion"><SectionTitle title="Inspiración" description="Los salones con más reservas pagadas; si aún no hay ventas, mostramos salones con fechas abiertas." action={<Button to="/salones" variant="ghost" icon={ArrowRight}>Ver todos</Button>} /><div className="salon-grid salon-grid--featured">{featured.map((salon) => <SalonCard key={salon.id} salon={salon} featured />)}</div></section>
     <section className="ritual-section"><div className="container ritual-grid"><div className="ritual-copy" data-reveal><span className="eyebrow">El ritual MediaLuna</span><h2>Tu evento,<br /><em>a tu ritmo.</em></h2><p>Busca, guarda, compara y reserva desde un mismo lugar. Sin correos perdidos, sin llamadas de ida y vuelta.</p><Button to="/registro" variant="light" icon={ArrowRight}>Crear mi cuenta</Button></div><div className="ritual-list" data-reveal><div><span>01</span><div><strong>Inspírate</strong><p>Descubre salones que se sienten como tu evento.</p></div></div><div><span>02</span><div><strong>Arma tu plan</strong><p>Elige fecha y suma los detalles que hacen la diferencia.</p></div></div><div><span>03</span><div><strong>Hazlo realidad</strong><p>Confirma tu reservación y disfruta el camino.</p></div></div></div></div></section>
     <SiteFooter />
   </AnimatedPage>
@@ -74,13 +121,98 @@ export function HomePage() {
 
 export function SalonesPage() {
   const { data } = useApp()
+  const navigate = useNavigate()
   const [params] = useSearchParams()
-  const [filters, setFilters] = useState({ location: params.get('location') ?? '', capacity: '', type: 'Todos' })
+  const homeLocation = params.get('location') ?? ''
+  const homeDate = params.get('date') ?? ''
+  const homeGuests = params.get('guests') ?? ''
+  const [filters, setFilters] = useState({
+    capacity: homeGuests || params.get('capacity') || '',
+    onlyAvailable: params.get('available') === 'true',
+  })
   const [saved, setSaved] = useState([])
   const visibleSalons = data.salones.filter(isVisibleSalon)
-  const types = ['Todos', ...new Set(visibleSalons.map((salon) => salon.type.split(' & ')[0]))]
-  const salons = visibleSalons.filter((salon) => (!filters.location || `${getSalonLocation(salon)} ${salon.name}`.toLowerCase().includes(filters.location.toLowerCase())) && (!filters.capacity || salon.capacity >= Number(filters.capacity)) && (filters.type === 'Todos' || salon.type.startsWith(filters.type)))
-  return <AnimatedPage><div className="container internal-page"><Breadcrumbs items={[{ label: 'Salones' }]} /><PageHeader eyebrow="Encuentra tu lugar" title="Espacios que hacen memoria." description="Explora salones con personalidad para bodas, cenas, lanzamientos y noches que no necesitan explicación." /><div className="listing-toolbar" data-reveal><div className="listing-search"><Search size={17} /><input value={filters.location} onChange={(event) => setFilters({ ...filters, location: event.target.value })} placeholder="Buscar por nombre o ciudad" /></div><select value={filters.capacity} onChange={(event) => setFilters({ ...filters, capacity: event.target.value })}><option value="">Cualquier capacidad</option><option value="50">50+ personas</option><option value="100">100+ personas</option><option value="150">150+ personas</option></select><div className="filter-chips">{types.map((type) => <button type="button" className={clsx(filters.type === type && 'filter-chip--active')} onClick={() => setFilters({ ...filters, type })} key={type}>{type}</button>)}</div></div><div className="listing-summary"><span><strong>{salons.length}</strong> espacios disponibles</span><span>Ordenar: <strong>Recomendados</strong> <ChevronLeft size={14} className="rotate-270" /></span></div>{salons.length ? <div className="salon-grid">{salons.map((salon) => <div className="salon-card-wrap" key={salon.id}><SalonCard salon={salon} /><button type="button" className={clsx('save-button', saved.includes(salon.id) && 'save-button--active')} onClick={() => setSaved((items) => items.includes(salon.id) ? items.filter((id) => id !== salon.id) : [...items, salon.id])}><Heart size={15} fill={saved.includes(salon.id) ? 'currentColor' : 'none'} />{saved.includes(salon.id) ? 'Guardado' : 'Guardar'}</button></div>)}</div> : <EmptyState icon={Compass} title="No encontramos ese match" description="Prueba con otra zona o ajusta la capacidad para ver más espacios." action={<Button variant="secondary" onClick={() => setFilters({ location: '', capacity: '', type: 'Todos' })}>Limpiar filtros</Button>} />}</div></AnimatedPage>
+  const hasHomeFilters = Boolean(homeLocation || homeDate || homeGuests)
+  const clearFilters = () => {
+    setFilters({ capacity: '', onlyAvailable: false })
+    navigate('/salones', { replace: true })
+  }
+  const salons = visibleSalons.filter((salon) => {
+    const matchesLocation = !homeLocation || `${getSalonLocation(salon)} ${salon.name}`.toLowerCase().includes(homeLocation.toLowerCase())
+    const matchesCapacity = !filters.capacity || salon.capacity >= Number(filters.capacity)
+    const matchesDate = !homeDate || salonIsAvailableOnDate(data, salon.id, homeDate)
+    const matchesAvailability = !filters.onlyAvailable || salonHasAvailableDates(data, salon.id)
+    return matchesLocation && matchesCapacity && matchesDate && matchesAvailability
+  })
+
+  return (
+    <AnimatedPage>
+      <div className="container internal-page">
+        <Breadcrumbs items={[{ label: 'Salones' }]} />
+        <PageHeader
+          eyebrow="Encuentra tu lugar"
+          title="Espacios que hacen memoria."
+          description="Explora salones con personalidad para bodas, cenas, lanzamientos y noches que no necesitan explicación."
+        />
+        <div className="listing-toolbar listing-toolbar--simple" data-reveal>
+          <select
+            aria-label="Filtrar por capacidad"
+            value={filters.capacity}
+            onChange={(event) => setFilters({ ...filters, capacity: event.target.value })}
+          >
+            <option value="">Cualquier capacidad</option>
+            <option value="50">50+ personas</option>
+            <option value="100">100+ personas</option>
+            <option value="150">150+ personas</option>
+            <option value="200">200+ personas</option>
+          </select>
+          <label className="availability-toggle">
+            <input
+              type="checkbox"
+              checked={filters.onlyAvailable}
+              onChange={(event) => setFilters({ ...filters, onlyAvailable: event.target.checked })}
+            />
+            <span>Solo con fechas disponibles</span>
+          </label>
+        </div>
+        {hasHomeFilters && (
+          <div className="active-search-note" data-reveal>
+            <span>
+              Búsqueda del home
+              {homeDate && <> · {formatDate(homeDate, 'd MMM yyyy')}</>}
+              {homeGuests && <> · {homeGuests}+ invitados</>}
+              {homeLocation && <> · {homeLocation}</>}
+            </span>
+            <Button variant="ghost" size="sm" onClick={clearFilters}>Limpiar búsqueda</Button>
+          </div>
+        )}
+        {salons.length ? (
+          <div className="salon-grid">
+            {salons.map((salon) => (
+              <div className="salon-card-wrap" key={salon.id}>
+                <SalonCard salon={salon} />
+                <button
+                  type="button"
+                  className={clsx('save-button', saved.includes(salon.id) && 'save-button--active')}
+                  onClick={() => setSaved((items) => items.includes(salon.id) ? items.filter((id) => id !== salon.id) : [...items, salon.id])}
+                >
+                  <Heart size={15} fill={saved.includes(salon.id) ? 'currentColor' : 'none'} />
+                  {saved.includes(salon.id) ? 'Guardado' : 'Guardar'}
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <EmptyState
+            icon={Compass}
+            title="No hay salones disponibles con esos filtros."
+            description="Prueba con otra fecha o capacidad para ver más espacios."
+            action={<Button variant="secondary" onClick={clearFilters}>Limpiar filtros</Button>}
+          />
+        )}
+      </div>
+    </AnimatedPage>
+  )
 }
 
 export function SalonDetailPage() {
@@ -88,7 +220,7 @@ export function SalonDetailPage() {
   const { data, selectSalon } = useApp()
   const salon = data.salones.find((item) => item.id === id && isVisibleSalon(item))
   const [activePhoto, setActivePhoto] = useState(0)
-  if (!salon) return <AnimatedPage><div className="container internal-page"><EmptyState title="Salón no encontrado" description="Este espacio no está disponible en la capa mock." action={<Button to="/salones">Volver a salones</Button>} /></div></AnimatedPage>
+  if (!salon) return <AnimatedPage><div className="container internal-page"><EmptyState title="Salón no encontrado" description="Este espacio no está disponible." action={<Button to="/salones">Volver a salones</Button>} /></div></AnimatedPage>
   return <AnimatedPage><div className="container internal-page"><Breadcrumbs items={[{ label: 'Salones', to: '/salones' }, { label: salon.name }]} /><section className="detail-hero"><div className="detail-gallery" data-reveal><div className="detail-gallery__main"><img src={salon.photos?.[activePhoto] || salon.urlImagen} alt={salon.name} /><span className="detail-gallery__count"><CameraIcon /> {activePhoto + 1} / {salon.photos?.length ?? 1}</span></div><div className="detail-gallery__thumbs">{salon.photos?.map((photo, index) => <button type="button" className={clsx(activePhoto === index && 'thumb--active')} key={photo} onClick={() => setActivePhoto(index)}><img src={photo} alt={`${salon.name} vista ${index + 1}`} /></button>)}</div></div><div className="detail-copy" data-reveal><div className="detail-copy__top"><Badge tone="dark">{salon.type}</Badge><span><BadgeCheck size={16} /> Espacio verificado</span></div><h1>{salon.name}</h1><p className="detail-location"><MapPin size={16} /> {salon.direccion} · {getSalonLocation(salon)}</p><p className="detail-description">{salon.description}</p><div className="detail-highlights"><span><UsersRound size={17} /><strong>{salon.capacity}</strong><small>personas</small></span><span><Sparkles size={17} /><strong>{salon.serviciosIds?.length ?? 0}</strong><small>servicios</small></span><span><BadgeCheck size={17} /><strong>Verificado</strong><small>por MediaLuna</small></span></div><div className="detail-price"><div><small>Desde</small><strong>{formatCurrency(salon.basePrice)}</strong><span>/ evento</span></div><Button to={`/reservar/${salon.id}/fecha`} onClick={() => selectSalon(salon.id)} icon={ArrowRight}>Elegir este salón</Button></div><p className="detail-note"><ShieldCheck size={15} /> Reserva protegida · Respuesta del dueño en menos de 24 h</p></div></section></div></AnimatedPage>
 }
 
@@ -97,7 +229,7 @@ function CameraIcon() { return <span className="camera-icon"><span /></span> }
 const getAvailabilityForSalon = (data, salonId) => data.disponibilidad.filter((item) => item.salonesIds?.includes(salonId))
 const getAvailabilityDatesForSalon = (availability) => availability
   .filter((item) => item.fecha)
-  .map((item) => ({ fecha: item.fecha, estado: item.estado ?? 'disponible' }))
+  .map((item) => ({ fecha: item.fecha, estado: item.estado }))
   .sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)))
 
 export function BookingDatePage() {
@@ -107,7 +239,7 @@ export function BookingDatePage() {
   const salon = data.salones.find((item) => item.id === id && isVisibleSalon(item))
   const salonAvailability = getAvailabilityForSalon(data, id)
   const availabilityDates = getAvailabilityDatesForSalon(salonAvailability)
-  const availableDates = availabilityDates.filter((item) => item.estado === 'disponible').map((item) => item.fecha)
+  const availableDates = availabilityDates.filter(isAvailableRecord).map((item) => item.fecha)
   const initialSelected = bookingDraft.salonId === id && availableDates.includes(bookingDraft.date)
     ? bookingDraft.date
     : availableDates[0] ?? ''
@@ -182,38 +314,138 @@ export function BookingSummaryPage() {
   return <AnimatedPage><div className="container booking-page"><Breadcrumbs items={[{ label: 'Salones', to: '/salones' }, { label: salon.name, to: `/salones/${id}` }, { label: 'Resumen' }]} /><div className="booking-heading"><div><span className="eyebrow">Casi está</span><h1>Revisa tu reservación.</h1><p>Todo listo para empezar a crear una noche especial.</p></div><ProgressSteps active={3} /></div><div className="booking-layout"><section className="booking-main"><div className="review-card"><div className="review-card__top"><img src={salon.photos?.[0]} alt={salon.name} /><div><Badge tone="dark">{salon.type}</Badge><h2>{salon.name}</h2><p><MapPin size={14} /> {getSalonLocation(salon)}</p></div><Link to={`/reservar/${id}/fecha`} className="edit-link">Editar <ArrowRight size={14} /></Link></div><div className="review-grid"><div><span className="review-label">Fecha</span><strong><CalendarDays size={15} /> {formatDate(bookingDraft.date, 'EEEE d MMMM yyyy')}</strong></div><div><span className="review-label">Capacidad</span><strong><UsersRound size={15} /> Hasta {salon.capacity} personas</strong></div><div><span className="review-label">Dirección</span><strong><MapPin size={15} /> {salon.direccion}</strong></div><div><span className="review-label">Estado</span><strong><Badge tone="warning" dot>Pendiente de confirmación</Badge></strong></div></div></div><div className="review-card"><div className="review-section-heading"><div><span className="step-number">+</span><h2>Extras seleccionados</h2></div><Link to={`/reservar/${id}/servicios`} className="edit-link">Editar <ArrowRight size={14} /></Link></div>{services.length ? services.map((service) => <div className="review-service" key={service.id}><span><Sparkles size={15} /></span><strong>{service.nombre}</strong><span>{formatCurrency(service.precio)}</span></div>) : <p className="muted-copy">No agregaste servicios extra.</p>}</div>{error && <InfoNote tone="warning">{error}</InfoNote>}<InfoNote tone="warning"><strong>Pago seguro con Stripe.</strong> Al confirmar se creará la reservación y el pago quedará pendiente de conexión.</InfoNote></section><aside className="booking-aside"><div className="total-card"><span className="eyebrow">Resumen de inversión</span><div className="total-card__line"><span>Precio del salón</span><strong>{formatCurrency(priceSalon)}</strong></div><div className="total-card__line"><span>Servicios extra</span><strong>{formatCurrency(totalServices)}</strong></div><div className="total-card__line total-card__grand"><span>Total</span><strong>{formatCurrency(priceSalon + totalServices)}</strong></div><label className="terms-check"><input type="checkbox" checked={terms} onChange={(event) => setTerms(event.target.checked)} /><span>He leído y acepto las condiciones de reservación.</span></label><Button className="full-button" onClick={confirm} disabled={!terms || creating} icon={CreditCard}>{creating ? 'Creando reservación…' : 'Confirmar reservación'}</Button><p className="stripe-placeholder"><WalletCards size={14} /> Pagar: Pendiente de conexión con Stripe</p></div></aside></div></div></AnimatedPage>
 }
 
+const isValidEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim())
+
+const validateLoginForm = ({ email, password }) => {
+  if (!email.trim()) return 'Escribe tu correo electrónico.'
+  if (!isValidEmail(email)) return 'Escribe un correo electrónico válido.'
+  if (!password) return 'Escribe tu contraseña.'
+  return ''
+}
+
+const validateRegisterForm = ({ nombre, telefono, correo, password }, acceptedTerms) => {
+  if (!nombre.trim()) return 'Escribe tu nombre.'
+  if (!telefono.trim()) return 'Escribe tu teléfono.'
+  if (!correo.trim()) return 'Escribe tu correo electrónico.'
+  if (!isValidEmail(correo)) return 'Escribe un correo electrónico válido.'
+  if (!password) return 'Crea una contraseña.'
+  if (password.length < 6) return 'La contraseña debe tener al menos 6 caracteres.'
+  if (!acceptedTerms) return 'Acepta los términos y el aviso de privacidad.'
+  return ''
+}
+
+function AuthStatusView({ register = false, eyebrow, title, description }) {
+  return <AnimatedPage className="auth-page"><div className="auth-layout"><div className={clsx('auth-art', register && 'auth-art--register')}><BrandPanel register={register} /></div><div className="auth-form-wrap"><Link to="/" className="auth-back"><ChevronLeft size={15} /> Volver a MediaLuna</Link><div className="auth-form auth-status" data-reveal><span className="auth-status__icon"><ShieldCheck size={24} /></span><span className="eyebrow">{eyebrow}</span><h1>{title}</h1><p>{description}</p><div className="auth-status__actions"><Button to="/" variant="secondary">Ir al inicio</Button><Button to="/login" icon={ArrowRight}>Iniciar sesión</Button></div></div></div></div></AnimatedPage>
+}
+
 export function LoginPage() {
   const navigate = useNavigate()
-  const { loginWithCredentials, authMode } = useApp()
+  const { loginWithCredentials, resendVerificationEmail, authMode } = useApp()
   const [params] = useSearchParams()
   const [role, setRole] = useState('cliente')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
+  const [resendMessage, setResendMessage] = useState('')
+  const [canResend, setCanResend] = useState(false)
   const [submitting, setSubmitting] = useState(false)
+  const [resending, setResending] = useState(false)
   const demoEmails = { cliente: 'lucia@email.com', dueno: 'mariana@aurora.mx', administrador: 'admin@medialuna.mx' }
+  const verified = params.get('verified') === 'true'
   const submit = async (event) => {
     event.preventDefault()
+    const validation = validateLoginForm({ email, password })
+    if (validation) {
+      setError(validation)
+      setCanResend(false)
+      return
+    }
     setSubmitting(true)
+    setError('')
+    setResendMessage('')
+    setCanResend(false)
     const result = await loginWithCredentials(email, password)
     setSubmitting(false)
-    if (!result.ok) { setError(result.message); return }
+    if (!result.ok) {
+      setError(result.message)
+      setCanResend(Boolean(result.canResendVerification))
+      return
+    }
     const roleRoute = result.user.rol === 'administrador' ? '/admin' : result.user.rol === 'dueno' ? '/dueno' : '/cliente'
     navigate(params.get('next') || roleRoute)
   }
-  const selectDemoRole = (nextRole) => { setRole(nextRole); setEmail(demoEmails[nextRole]); setPassword('medialuna'); setError('') }
-  return <AnimatedPage className="auth-page"><div className="auth-layout"><div className="auth-art"><BrandPanel /></div><div className="auth-form-wrap"><Link to="/" className="auth-back"><ChevronLeft size={15} /> Volver a MediaLuna</Link><div className="auth-form" data-reveal><span className="eyebrow">Qué bueno verte</span><h1>Entra a tu espacio.</h1><p>Continúa donde lo dejaste o explora algo nuevo.</p><form onSubmit={submit}><label className="field"><span>Correo electrónico</span><input type="email" required placeholder="tu@correo.com" value={email} onChange={(event) => setEmail(event.target.value)} /></label><label className="field"><span>Contraseña</span><input type="password" required minLength="6" placeholder="••••••••" value={password} onChange={(event) => setPassword(event.target.value)} /></label>{error && <InfoNote tone="warning"><CircleAlert size={15} /> {error}</InfoNote>}{authMode === 'demo' ? <div className="demo-role"><span>Entrar como demo</span><div>{['cliente', 'dueno', 'administrador'].map((item) => <button type="button" key={item} className={clsx(role === item && 'demo-role--active')} onClick={() => selectDemoRole(item)}>{item}</button>)}</div></div> : <InfoNote tone="lilac">Usa una cuenta registrada en Firebase Authentication.</InfoNote>}<Button className="full-button" type="submit" icon={ArrowRight} disabled={submitting}>{submitting ? 'Verificando…' : 'Iniciar sesión'}</Button></form><p className="auth-switch">¿Aún no tienes cuenta? <Link to="/registro">Regístrate</Link></p></div></div></div></AnimatedPage>
+  const resendVerification = async () => {
+    const validation = validateLoginForm({ email, password })
+    if (validation) {
+      setError(validation)
+      return
+    }
+    setResending(true)
+    setError('')
+    setResendMessage('')
+    const result = await resendVerificationEmail(email, password)
+    setResending(false)
+    if (!result.ok) {
+      setError(result.message)
+      setCanResend(true)
+      return
+    }
+    setCanResend(false)
+    setResendMessage(result.message)
+  }
+  const updateEmail = (event) => { setEmail(event.target.value); setError(''); setResendMessage(''); setCanResend(false) }
+  const updatePassword = (event) => { setPassword(event.target.value); setError(''); setResendMessage(''); setCanResend(false) }
+  const selectDemoRole = (nextRole) => { setRole(nextRole); setEmail(demoEmails[nextRole]); setPassword('medialuna'); setError(''); setResendMessage(''); setCanResend(false) }
+  if (verified) {
+    return <AuthStatusView
+      eyebrow="Verificación lista"
+      title="Cuenta verificada."
+      description="Ya puedes iniciar sesión y entrar a tu espacio en MediaLuna."
+    />
+  }
+  return <AnimatedPage className="auth-page"><div className="auth-layout"><div className="auth-art"><BrandPanel /></div><div className="auth-form-wrap"><Link to="/" className="auth-back"><ChevronLeft size={15} /> Volver a MediaLuna</Link><div className="auth-form" data-reveal><span className="eyebrow">Qué bueno verte</span><h1>Entra a tu espacio.</h1><p>Continúa donde lo dejaste o explora algo nuevo.</p><form onSubmit={submit} noValidate><label className="field"><span>Correo electrónico</span><input type="email" placeholder="tu@correo.com" value={email} onChange={updateEmail} /></label><label className="field"><span>Contraseña</span><input type="password" placeholder="••••••••" value={password} onChange={updatePassword} /></label>{error && <InfoNote tone="warning"><CircleAlert size={15} /> {error}</InfoNote>}{resendMessage && <InfoNote tone="lilac" icon={ShieldCheck}>{resendMessage}</InfoNote>}{canResend && <Button className="full-button" type="button" variant="secondary" onClick={resendVerification} disabled={resending}>{resending ? 'Reenviando…' : 'Reenviar correo de verificación'}</Button>}{authMode === 'demo' && <div className="demo-role"><span>Entrar como demo</span><div>{['cliente', 'dueno', 'administrador'].map((item) => <button type="button" key={item} className={clsx(role === item && 'demo-role--active')} onClick={() => selectDemoRole(item)}>{item}</button>)}</div></div>}<Button className="full-button" type="submit" icon={ArrowRight} disabled={submitting}>{submitting ? 'Verificando…' : 'Iniciar sesión'}</Button></form><p className="auth-switch">¿Aún no tienes cuenta? <Link to="/registro">Regístrate</Link></p></div></div></div></AnimatedPage>
 }
 
 export function RegisterPage() {
   const navigate = useNavigate()
   const { registerClient } = useApp()
   const [form, setForm] = useState({ nombre: '', telefono: '', correo: '', password: '' })
+  const [acceptedTerms, setAcceptedTerms] = useState(false)
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
-  const submit = async (event) => { event.preventDefault(); setSubmitting(true); const result = await registerClient(form); setSubmitting(false); if (!result.ok) { setError(result.message); return }; navigate('/cliente') }
+  const [verificationSent, setVerificationSent] = useState(false)
+  const submit = async (event) => {
+    event.preventDefault()
+    const validation = validateRegisterForm(form, acceptedTerms)
+    if (validation) {
+      setError(validation)
+      return
+    }
+    setSubmitting(true)
+    setError('')
+    const result = await registerClient(form)
+    setSubmitting(false)
+    if (!result.ok) {
+      setError(result.message)
+      return
+    }
+    if (result.verificationSent) {
+      setVerificationSent(true)
+      return
+    }
+    navigate('/cliente')
+  }
   const update = (field) => (event) => { setForm({ ...form, [field]: event.target.value }); setError('') }
-  return <AnimatedPage className="auth-page"><div className="auth-layout"><div className="auth-art auth-art--register"><BrandPanel register /></div><div className="auth-form-wrap"><Link to="/" className="auth-back"><ChevronLeft size={15} /> Volver a MediaLuna</Link><div className="auth-form" data-reveal><span className="eyebrow">Tu próxima historia</span><h1>Crea tu cuenta.</h1><p>Guarda favoritos, reserva en minutos y lleva todo en un solo lugar.</p><form onSubmit={submit}><div className="form-grid"><label className="field"><span>Nombre</span><input required placeholder="Tu nombre" value={form.nombre} onChange={update('nombre')} /></label><label className="field"><span>Teléfono</span><input required type="tel" placeholder="+52 662 …" value={form.telefono} onChange={update('telefono')} /></label></div><label className="field"><span>Correo electrónico</span><input type="email" required placeholder="tu@correo.com" value={form.correo} onChange={update('correo')} /></label><label className="field"><span>Contraseña</span><input type="password" required minLength="6" placeholder="Mínimo 6 caracteres" value={form.password} onChange={update('password')} /></label>{error && <InfoNote tone="warning"><CircleAlert size={15} /> {error}</InfoNote>}<label className="terms-check"><input type="checkbox" required /><span>Acepto los términos y el aviso de privacidad.</span></label><Button className="full-button" type="submit" icon={ArrowRight} disabled={submitting}>{submitting ? 'Creando cuenta…' : 'Crear cuenta'}</Button></form><p className="auth-switch">¿Ya tienes cuenta? <Link to="/login">Inicia sesión</Link></p></div></div></div></AnimatedPage>
+  const updateTerms = (event) => { setAcceptedTerms(event.target.checked); setError('') }
+  if (verificationSent) {
+    return <AuthStatusView
+      register
+      eyebrow="Revisa tu correo"
+      title="Te enviamos un correo de verificación."
+      description="Revisa tu bandeja de entrada. Si ya verificaste tu cuenta, ve a iniciar sesión."
+    />
+  }
+  return <AnimatedPage className="auth-page"><div className="auth-layout"><div className="auth-art auth-art--register"><BrandPanel register /></div><div className="auth-form-wrap"><Link to="/" className="auth-back"><ChevronLeft size={15} /> Volver a MediaLuna</Link><div className="auth-form" data-reveal><span className="eyebrow">Tu próxima historia</span><h1>Crea tu cuenta.</h1><p>Guarda favoritos, reserva en minutos y lleva todo en un solo lugar.</p><form onSubmit={submit} noValidate><div className="form-grid"><label className="field"><span>Nombre</span><input placeholder="Tu nombre" value={form.nombre} onChange={update('nombre')} /></label><label className="field"><span>Teléfono</span><input type="tel" placeholder="+52 662 …" value={form.telefono} onChange={update('telefono')} /></label></div><label className="field"><span>Correo electrónico</span><input type="email" placeholder="tu@correo.com" value={form.correo} onChange={update('correo')} /></label><label className="field"><span>Contraseña</span><input type="password" placeholder="Mínimo 6 caracteres" value={form.password} onChange={update('password')} /></label>{error && <InfoNote tone="warning"><CircleAlert size={15} /> {error}</InfoNote>}<label className="terms-check"><input type="checkbox" checked={acceptedTerms} onChange={updateTerms} /><span>Acepto los términos y el aviso de privacidad.</span></label><Button className="full-button" type="submit" icon={ArrowRight} disabled={submitting}>{submitting ? 'Creando cuenta…' : 'Crear cuenta'}</Button></form><p className="auth-switch">¿Ya tienes cuenta? <Link to="/login">Inicia sesión</Link></p></div></div></div></AnimatedPage>
 }
 
 function BrandPanel({ register = false }) {

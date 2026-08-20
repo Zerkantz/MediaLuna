@@ -4,9 +4,13 @@ import {
   doc,
   getDoc,
   getDocs,
+  limit,
+  onSnapshot,
+  query,
   serverTimestamp,
   setDoc,
   updateDoc,
+  where,
 } from 'firebase/firestore'
 import { format, isValid, parse } from 'date-fns'
 import { es } from 'date-fns/locale'
@@ -20,6 +24,7 @@ export const COLLECTIONS = {
   disponibilidad: 'disponibilidad',
   reservaciones: 'reservaciones',
   pagos: 'pagos',
+  notificaciones: 'notificaciones',
 }
 
 const asArray = (value) => Array.isArray(value) ? value : []
@@ -73,6 +78,12 @@ const normalizeRecord = (collectionName, id, rawData) => {
     record.salonesIds = asArray(record.salonesIds)
   }
 
+  if (collectionName === COLLECTIONS.notificaciones) {
+    record.leida = Boolean(record.leida)
+    record.usuarioId = record.usuarioId ?? ''
+    record.rolDestino = record.rolDestino ?? ''
+  }
+
   return record
 }
 
@@ -88,6 +99,82 @@ export const getServicios = () => readCollection(COLLECTIONS.servicios)
 export const getDisponibilidad = () => readCollection(COLLECTIONS.disponibilidad)
 export const getReservaciones = () => readCollection(COLLECTIONS.reservaciones)
 export const getPagos = () => readCollection(COLLECTIONS.pagos)
+export const getNotificaciones = () => readCollection(COLLECTIONS.notificaciones)
+export const getPagoPorReservacion = async (reservacionId) => {
+  if (!reservacionId) return null
+
+  if (!firebaseConfigured || !db) {
+    const pagos = await mockDb.getCollection(COLLECTIONS.pagos)
+    return pagos.find((pago) => pago.reservacionId === reservacionId) ?? null
+  }
+
+  const snapshot = await getDocs(query(
+    collection(db, COLLECTIONS.pagos),
+    where('reservacionId', '==', reservacionId),
+    limit(1),
+  ))
+  const paymentDocument = snapshot.docs[0]
+  return paymentDocument
+    ? normalizeRecord(COLLECTIONS.pagos, paymentDocument.id, paymentDocument.data())
+    : null
+}
+export const subscribeReservacion = (id, onChange, onError) => {
+  if (!id) return () => {}
+
+  if (!firebaseConfigured || !db) {
+    let active = true
+    mockDb.getCollection(COLLECTIONS.reservaciones)
+      .then((items) => {
+        if (!active) return
+        onChange(items.find((item) => item.id === id) ?? null)
+      })
+      .catch((error) => {
+        if (active) onError?.(error)
+      })
+    return () => { active = false }
+  }
+
+  return onSnapshot(
+    doc(db, COLLECTIONS.reservaciones, id),
+    (snapshot) => {
+      onChange(snapshot.exists()
+        ? normalizeRecord(COLLECTIONS.reservaciones, snapshot.id, snapshot.data())
+        : null)
+    },
+    onError,
+  )
+}
+export const getNotificacionesParaUsuario = async (user) => {
+  if (!user) return []
+  if (!firebaseConfigured || !db) {
+    const notificaciones = await mockDb.getCollection(COLLECTIONS.notificaciones)
+    return notificaciones.filter((notification) => (
+      notification.usuarioId === user.id || (!notification.usuarioId && notification.rolDestino === user.rol)
+    ))
+  }
+
+  const byUser = await getDocs(query(
+    collection(db, COLLECTIONS.notificaciones),
+    where('usuarioId', '==', user.id),
+  )).catch((error) => {
+    console.warn('No se pudieron cargar notificaciones por usuario:', error)
+    return { docs: [] }
+  })
+  const byRole = await getDocs(query(
+    collection(db, COLLECTIONS.notificaciones),
+    where('usuarioId', '==', ''),
+    where('rolDestino', '==', user.rol),
+  )).catch((error) => {
+    console.warn('No se pudieron cargar notificaciones por rol:', error)
+    return { docs: [] }
+  })
+
+  const records = new Map()
+  ;[...byUser.docs, ...byRole.docs].forEach((item) => {
+    records.set(item.id, normalizeRecord(COLLECTIONS.notificaciones, item.id, item.data()))
+  })
+  return [...records.values()]
+}
 
 export const mergeAvailabilityIntoSalons = (salones = [], disponibilidad = []) => {
   const availabilityBySalon = new Map()
@@ -115,16 +202,20 @@ export const mergeAvailabilityIntoSalons = (salones = [], disponibilidad = []) =
 }
 
 export async function getDatabaseSnapshot() {
-  const [usuarios, salones, servicios, disponibilidad, reservaciones, pagos] = await Promise.all([
+  const [usuarios, salones, servicios, disponibilidad, reservaciones, pagos, notificaciones] = await Promise.all([
     getUsuarios(),
     getSalones(),
     getServicios(),
     getDisponibilidad(),
     getReservaciones(),
     getPagos(),
+    getNotificaciones().catch((error) => {
+      console.warn('No se pudieron cargar notificaciones:', error)
+      return []
+    }),
   ])
 
-  return { usuarios, salones: mergeAvailabilityIntoSalons(salones, disponibilidad), servicios, disponibilidad, reservaciones, pagos }
+  return { usuarios, salones: mergeAvailabilityIntoSalons(salones, disponibilidad), servicios, disponibilidad, reservaciones, pagos, notificaciones }
 }
 
 export const getUsuarioActual = async () => {
@@ -186,6 +277,14 @@ const toFirestoreData = (collectionName, input, isCreate = false) => {
     if (data.identificadorPagoStripe === '') data.identificadorPagoStripe = null
   }
 
+  if (collectionName === COLLECTIONS.notificaciones) {
+    if (isCreate && data.leida === undefined) data.leida = false
+    if (isCreate || typeof data.fechaCreacion === 'string') data.fechaCreacion = serverTimestamp()
+    for (const key of ['usuarioId', 'rolDestino', 'tipo', 'titulo', 'mensaje', 'reservacionId', 'salonId']) {
+      if (data[key] === undefined || data[key] === null) data[key] = ''
+    }
+  }
+
   return removeUndefined(data)
 }
 
@@ -225,3 +324,10 @@ export const crearDisponibilidad = (data) => createDocument(COLLECTIONS.disponib
 export const actualizarDisponibilidad = (id, updates) => updateDocument(COLLECTIONS.disponibilidad, id, updates)
 export const crearPago = (data) => createDocument(COLLECTIONS.pagos, data)
 export const actualizarPago = (id, updates) => updateDocument(COLLECTIONS.pagos, id, updates)
+export const actualizarPagoPorReservacion = async (reservacionId, updates) => {
+  const payment = await getPagoPorReservacion(reservacionId)
+  if (!payment) return null
+  return actualizarPago(payment.id, updates)
+}
+export const crearNotificacion = (data) => createDocument(COLLECTIONS.notificaciones, data)
+export const actualizarNotificacion = (id, updates) => updateDocument(COLLECTIONS.notificaciones, id, updates)
