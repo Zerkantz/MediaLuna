@@ -38,11 +38,18 @@ import { StreamChatWidget } from '../components/StreamChatWidget'
 import { DailyVideoCallModal } from '../components/DailyVideoCallModal'
 import {
   NUMBER_MAX_VALUE,
+  PRICE_MAX_VALUE,
+  SALON_DESCRIPTION_MAX_LENGTH,
   TEXT_MAX_LENGTH,
+  getTodayDateInputValue,
+  getWeekendSurcharge,
+  isPastDateValue,
   isValidPhoneInput,
   limitText,
   normalizeNumberInput,
+  normalizePriceInput,
   normalizePhoneInput,
+  toBoundedPrice,
   toBoundedNumber,
 } from '../utils/formLimits'
 import {
@@ -490,6 +497,7 @@ export function ClientReservationDetailPage() {
   const services = data.servicios.filter((service) => reservation.serviciosIds.includes(service.id))
   const ownerId = Array.isArray(reservation.duenoId) ? reservation.duenoId[0] : (reservation.duenoId || salon?.duenoId || salon?.ownerId)
   const owner = data.usuarios.find((u) => u.id === ownerId) || { nombre: 'Mariana Castañeda', rol: 'dueño' }
+  const weekendSurcharge = Number(reservation.extraFinDeSemana ?? getWeekendSurcharge(reservation.fecha)) || 0
 
   return (
     <AnimatedPage className="panel-page">
@@ -532,6 +540,7 @@ export function ClientReservationDetailPage() {
           </div>
           <div className="detail-breakdown">
             <div><span>Precio del salón</span><strong>{formatCurrency(reservation.precioSalon)}</strong></div>
+            <div><span>Extra fin de semana</span><strong>{formatCurrency(weekendSurcharge)}</strong></div>
             <div><span>Servicios extra</span><strong>{formatCurrency(reservation.totalServicios)}</strong></div>
             <div className="detail-breakdown__total"><span>Total</span><strong>{formatCurrency(reservation.total)}</strong></div>
           </div>
@@ -596,7 +605,11 @@ export function ClientProfilePage() {
       setError('Escribe un teléfono válido, sin letras.')
       return
     }
-    const result = await updateClientProfile(form)
+    const result = await updateClientProfile({
+      ...form,
+      nombre: limitText(form.nombre).trim(),
+      correo: limitText(form.correo).trim(),
+    })
     if (!result.ok) setError(result.message)
   }
   return (
@@ -914,9 +927,13 @@ export function AdminSalonsPage() {
       ? checked
       : field === 'phone'
         ? normalizePhoneInput(value)
-        : ['capacity', 'basePrice'].includes(field)
-          ? normalizeNumberInput(value, { min: field === 'capacity' ? 1 : 0 })
-          : limitText(value)
+        : field === 'capacity'
+          ? normalizeNumberInput(value, { min: 1 })
+          : field === 'basePrice'
+            ? normalizePriceInput(value)
+            : field === 'description'
+              ? limitText(value, SALON_DESCRIPTION_MAX_LENGTH)
+              : limitText(value)
     setForm({ ...form, [field]: nextValue })
   }
   const resetForm = () => { setForm(emptyForm); setEditingId(null); setOpen(false); setUploading(false) }
@@ -970,16 +987,16 @@ export function AdminSalonsPage() {
       accent: currentSalon?.accent ?? '#8e7ab5',
       active: form.active,
       availableDates: currentSalon?.availableDates ?? [],
-      basePrice: toBoundedNumber(form.basePrice),
+      basePrice: toBoundedPrice(form.basePrice),
       capacity: toBoundedNumber(form.capacity, { min: 1, fallback: 1 }),
-      description: form.description.trim(),
-      direccion: currentSalon?.direccion ?? form.location.trim(),
-      location: form.location.trim(),
-      name: form.name.trim(),
+      description: limitText(form.description, SALON_DESCRIPTION_MAX_LENGTH).trim(),
+      direccion: currentSalon?.direccion ?? limitText(form.location).trim(),
+      location: limitText(form.location).trim(),
+      name: limitText(form.name).trim(),
       phone: form.phone.trim(),
       photos: form.urlImagen ? [form.urlImagen] : [],
       serviciosIds: form.serviciosIds,
-      type: form.type.trim(),
+      type: limitText(form.type).trim(),
       urlImagen: form.urlImagen,
       idPublicoCloudinary: form.idPublicoCloudinary,
       duenoId: form.duenoId,
@@ -1008,7 +1025,7 @@ export function AdminSalonsPage() {
     ])
   })
   const columns = [{ key: 'name', label: 'Salón', render: (row) => <span className="table-person"><img src={row.urlImagen || row.photos?.[0]} alt="" /><span><strong>{row.name}</strong><small>{getSalonLocation(row)}</small></span></span> }, { key: 'duenoId', label: 'Dueño', render: (row) => data.usuarios.find((user) => user.id === row.duenoId || user.salonesIds?.includes(row.id))?.nombre ?? 'Sin asignar' }, { key: 'type', label: 'Tipo' }, { key: 'capacity', label: 'Capacidad', render: (row) => `${row.capacity} personas` }, { key: 'basePrice', label: 'Precio base', render: (row) => formatCurrency(row.basePrice) }, { key: 'active', label: 'Estado', render: (row) => <StatusBadge status={row.active ? 'activo' : 'inactivo'} /> }, { key: 'actions', label: '', render: (row) => <div className="table-actions"><button className="icon-button" type="button" title="Editar salón" onClick={() => startEdit(row)}><Pencil size={15} /></button><button className="icon-button" type="button" onClick={() => toggleSalon(row.id)} title={row.active ? 'Ocultar' : 'Publicar'}>{row.active ? <Eye size={15} /> : <Check size={15} />}</button></div> }]
-  return <AnimatedPage className="panel-page"><PanelIntro eyebrow="Catálogo" title="Gestión de salones" description="Administra espacios, precios, fotos y publicación." crumbs={[{ label: 'Admin', to: '/admin' }, { label: 'Salones' }]} actions={<Button icon={Plus} onClick={startCreate}>Nuevo salón</Button>} />{open && <div className="workspace-card inline-form-card" data-reveal><div><span className="eyebrow">{editingId ? 'Editar salón' : 'Alta de salón'}</span><h2>{editingId ? 'Actualizar espacio' : 'Agregar un nuevo espacio'}</h2><p>El formulario guarda los campos de salones, asigna dueño con duenoId y usa Cloudinary para la imagen principal.</p></div><form className="inline-form inline-form--salon" onSubmit={submit}><input required maxLength={TEXT_MAX_LENGTH} placeholder="Nombre del salón" value={form.name} onChange={update('name')} /><input required maxLength={TEXT_MAX_LENGTH} placeholder="Tipo de salón" value={form.type} onChange={update('type')} /><input required maxLength={TEXT_MAX_LENGTH} placeholder="Ciudad / zona" value={form.location} onChange={update('location')} /><input type="tel" inputMode="tel" maxLength="13" placeholder="Teléfono" value={form.phone} onChange={update('phone')} /><input required type="number" min="1" max={NUMBER_MAX_VALUE} placeholder="Capacidad" value={form.capacity} onChange={update('capacity')} /><input required type="number" min="0" max={NUMBER_MAX_VALUE} placeholder="Precio base" value={form.basePrice} onChange={update('basePrice')} /><select required value={form.duenoId} onChange={update('duenoId')}><option value="">Asignar dueño</option>{owners.map((owner) => <option value={owner.id} key={owner.id}>{owner.nombre}</option>)}</select><textarea required maxLength={TEXT_MAX_LENGTH} placeholder="Descripción" value={form.description} onChange={update('description')} /><div className="checkbox-grid">{data.servicios.map((service) => <label key={service.id}><input type="checkbox" checked={form.serviciosIds.includes(service.id)} onChange={() => toggleServiceId(service.id)} />{service.nombre}</label>)}</div><label className="toggle-line"><input type="checkbox" checked={form.active} onChange={update('active')} /> Publicado</label><label className="upload-field"><ImagePlus size={16} />{uploading ? 'Subiendo...' : 'Subir imagen'}<input type="file" accept="image/*" onChange={uploadImage} /></label>{form.urlImagen && <span className="form-preview"><img src={form.urlImagen} alt="Preview del salón" />Imagen principal lista</span>}<div className="form-actions"><Button type="submit" size="sm" disabled={uploading}>{editingId ? 'Guardar cambios' : 'Guardar salón'}</Button>{editingId && <Button type="button" variant="danger" size="sm" onClick={archiveSalon}>Archivar salón</Button>}<Button type="button" variant="ghost" size="sm" onClick={resetForm}>Cancelar</Button></div></form><InfoNote tone="lilac"><ImagePlus size={15} /> Cloudinary · cloud_name: {CLOUDINARY_CONFIG.cloudName || 'pendiente'} · upload_preset: {CLOUDINARY_CONFIG.uploadPreset}. {cloudinaryUploadNote}</InfoNote></div>}<div className="workspace-card"><div className="table-toolbar"><div className="listing-search"><Search size={16} /><input value={query} maxLength={TEXT_MAX_LENGTH} onChange={(event) => setQuery(limitText(event.target.value))} placeholder="Buscar por salón, dueño, tipo, ciudad o estado" /></div><Badge tone="neutral">{rows.length} salones</Badge></div><Table columns={columns} rows={rows} /></div></AnimatedPage>
+  return <AnimatedPage className="panel-page"><PanelIntro eyebrow="Catálogo" title="Gestión de salones" description="Administra espacios, precios, fotos y publicación." crumbs={[{ label: 'Admin', to: '/admin' }, { label: 'Salones' }]} actions={<Button icon={Plus} onClick={startCreate}>Nuevo salón</Button>} />{open && <div className="workspace-card inline-form-card" data-reveal><div><span className="eyebrow">{editingId ? 'Editar salón' : 'Alta de salón'}</span><h2>{editingId ? 'Actualizar espacio' : 'Agregar un nuevo espacio'}</h2><p>El formulario guarda los campos de salones, asigna dueño con duenoId y usa Cloudinary para la imagen principal.</p></div><form className="inline-form inline-form--salon" onSubmit={submit}><input required maxLength={TEXT_MAX_LENGTH} placeholder="Nombre del salón" value={form.name} onChange={update('name')} /><input required maxLength={TEXT_MAX_LENGTH} placeholder="Tipo de salón" value={form.type} onChange={update('type')} /><input required maxLength={TEXT_MAX_LENGTH} placeholder="Ciudad / zona" value={form.location} onChange={update('location')} /><input type="tel" inputMode="tel" maxLength="13" placeholder="Teléfono" value={form.phone} onChange={update('phone')} /><input required type="number" min="1" max={NUMBER_MAX_VALUE} placeholder="Capacidad" value={form.capacity} onChange={update('capacity')} /><input required type="number" min="0" max={PRICE_MAX_VALUE} placeholder="Precio base" value={form.basePrice} onChange={update('basePrice')} /><select required value={form.duenoId} onChange={update('duenoId')}><option value="">Asignar dueño</option>{owners.map((owner) => <option value={owner.id} key={owner.id}>{owner.nombre}</option>)}</select><textarea required maxLength={SALON_DESCRIPTION_MAX_LENGTH} placeholder="Descripción" value={form.description} onChange={update('description')} /><div className="checkbox-grid">{data.servicios.map((service) => <label key={service.id}><input type="checkbox" checked={form.serviciosIds.includes(service.id)} onChange={() => toggleServiceId(service.id)} />{service.nombre}</label>)}</div><label className="toggle-line"><input type="checkbox" checked={form.active} onChange={update('active')} /> Publicado</label><label className="upload-field"><ImagePlus size={16} />{uploading ? 'Subiendo...' : 'Subir imagen'}<input type="file" accept="image/*" onChange={uploadImage} /></label>{form.urlImagen && <span className="form-preview"><img src={form.urlImagen} alt="Preview del salón" />Imagen principal lista</span>}<div className="form-actions"><Button type="submit" size="sm" disabled={uploading}>{editingId ? 'Guardar cambios' : 'Guardar salón'}</Button>{editingId && <Button type="button" variant="danger" size="sm" onClick={archiveSalon}>Archivar salón</Button>}<Button type="button" variant="ghost" size="sm" onClick={resetForm}>Cancelar</Button></div></form><InfoNote tone="lilac"><ImagePlus size={15} /> Cloudinary · cloud_name: {CLOUDINARY_CONFIG.cloudName || 'pendiente'} · upload_preset: {CLOUDINARY_CONFIG.uploadPreset}. {cloudinaryUploadNote}</InfoNote></div>}<div className="workspace-card"><div className="table-toolbar"><div className="listing-search"><Search size={16} /><input value={query} maxLength={TEXT_MAX_LENGTH} onChange={(event) => setQuery(limitText(event.target.value))} placeholder="Buscar por salón, dueño, tipo, ciudad o estado" /></div><Badge tone="neutral">{rows.length} salones</Badge></div><Table columns={columns} rows={rows} /></div></AnimatedPage>
 }
 
 export function AdminServicesPage() {
@@ -1024,7 +1041,7 @@ export function AdminServicesPage() {
     const nextValue = type === 'checkbox'
       ? checked
       : field === 'precio'
-        ? normalizeNumberInput(value)
+        ? normalizePriceInput(value)
         : limitText(value)
     setForm({ ...form, [field]: nextValue })
   }
@@ -1061,9 +1078,9 @@ export function AdminServicesPage() {
     event.preventDefault()
     await createService({
       ...form,
-      precio: toBoundedNumber(form.precio),
-      nombre: form.nombre.trim(),
-      descripcion: form.descripcion.trim(),
+      precio: toBoundedPrice(form.precio),
+      nombre: limitText(form.nombre).trim(),
+      descripcion: limitText(form.descripcion).trim(),
       urlImagen: form.urlImagen.trim(),
       idPublicoCloudinary: form.idPublicoCloudinary.trim(),
     })
@@ -1076,11 +1093,11 @@ export function AdminServicesPage() {
     service.activo ? 'activo' : 'inactivo',
   ]))
   const columns = [{ key: 'nombre', label: 'Servicio', render: (row) => <span className="table-person">{row.urlImagen ? <img src={row.urlImagen} alt="" /> : <span className="service-table-icon"><Sparkles size={15} /></span>}<span><strong>{row.nombre}</strong><small>{row.descripcion}</small></span></span> }, { key: 'precio', label: 'Precio', render: (row) => formatCurrency(row.precio) }, { key: 'activo', label: 'Estado', render: (row) => <StatusBadge status={row.activo ? 'activo' : 'inactivo'} /> }, { key: 'actions', label: '', render: (row) => <div className="table-actions"><button type="button" className="icon-button" title="Editar servicio" onClick={() => editService(row)}><Pencil size={15} /></button><button type="button" className="icon-button" title={row.activo ? 'Desactivar' : 'Activar'} onClick={() => toggleServiceActive(row.id)}>{row.activo ? <Trash2 size={15} /> : <Check size={15} />}</button></div> }]
-  return <AnimatedPage className="panel-page"><PanelIntro eyebrow="Catálogo" title="Gestión de servicios" description="Crea extras que los clientes pueden sumar a su reservación." crumbs={[{ label: 'Admin', to: '/admin' }, { label: 'Servicios' }]} actions={<Button icon={Plus} onClick={startCreateService}>Agregar</Button>} />{open && <><div className="workspace-card quick-create"><div><span className="eyebrow">{editing ? 'Editar servicio' : 'Nuevo servicio'}</span><h2>{editing ? 'Actualizar opción' : 'Sumar una opción'}</h2><p>El precio se guarda en pesos mexicanos y sólo los servicios activos aparecen al reservar.</p></div><form className="inline-form service-form" onSubmit={submit}><input required maxLength={TEXT_MAX_LENGTH} placeholder="Nombre del servicio" value={form.nombre} onChange={update('nombre')} /><input required min="0" max={NUMBER_MAX_VALUE} type="number" placeholder="Precio" value={form.precio} onChange={update('precio')} /><label className="upload-field"><ImagePlus size={16} />{uploading ? 'Subiendo...' : 'Subir imagen del servicio'}<input type="file" accept="image/*" onChange={uploadImage} /></label>{form.urlImagen && <span className="form-preview"><img src={form.urlImagen} alt="Preview del servicio" />Imagen lista</span>}<textarea required maxLength={TEXT_MAX_LENGTH} placeholder="Descripción" value={form.descripcion} onChange={update('descripcion')} /><label className="toggle-line"><input type="checkbox" checked={form.activo} onChange={update('activo')} /> Activo</label><div className="form-actions"><Button type="submit" icon={Plus} disabled={uploading}>{editing ? 'Guardar cambios' : 'Agregar'}</Button><Button type="button" variant="ghost" onClick={resetServiceForm}>Cancelar</Button></div></form></div><InfoNote tone="lilac"><ImagePlus size={15} /> Cloudinary · cloud_name: {CLOUDINARY_CONFIG.cloudName || 'pendiente'} · upload_preset: {CLOUDINARY_CONFIG.uploadPreset}. {cloudinaryUploadNote}</InfoNote></>}<div className="workspace-card"><div className="table-toolbar"><div className="listing-search"><Search size={16} /><input value={query} maxLength={TEXT_MAX_LENGTH} onChange={(event) => setQuery(limitText(event.target.value))} placeholder="Buscar por servicio, descripción, precio o estado" /></div><Badge tone="neutral">{rows.length} servicios</Badge></div><Table columns={columns} rows={rows} /></div></AnimatedPage>
+  return <AnimatedPage className="panel-page"><PanelIntro eyebrow="Catálogo" title="Gestión de servicios" description="Crea extras que los clientes pueden sumar a su reservación." crumbs={[{ label: 'Admin', to: '/admin' }, { label: 'Servicios' }]} actions={<Button icon={Plus} onClick={startCreateService}>Agregar</Button>} />{open && <><div className="workspace-card quick-create"><div><span className="eyebrow">{editing ? 'Editar servicio' : 'Nuevo servicio'}</span><h2>{editing ? 'Actualizar opción' : 'Sumar una opción'}</h2><p>El precio se guarda en pesos mexicanos y sólo los servicios activos aparecen al reservar.</p></div><form className="inline-form service-form" onSubmit={submit}><input required maxLength={TEXT_MAX_LENGTH} placeholder="Nombre del servicio" value={form.nombre} onChange={update('nombre')} /><input required min="0" max={PRICE_MAX_VALUE} type="number" placeholder="Precio" value={form.precio} onChange={update('precio')} /><label className="upload-field"><ImagePlus size={16} />{uploading ? 'Subiendo...' : 'Subir imagen del servicio'}<input type="file" accept="image/*" onChange={uploadImage} /></label>{form.urlImagen && <span className="form-preview"><img src={form.urlImagen} alt="Preview del servicio" />Imagen lista</span>}<textarea required maxLength={TEXT_MAX_LENGTH} placeholder="Descripción" value={form.descripcion} onChange={update('descripcion')} /><label className="toggle-line"><input type="checkbox" checked={form.activo} onChange={update('activo')} /> Activo</label><div className="form-actions"><Button type="submit" icon={Plus} disabled={uploading}>{editing ? 'Guardar cambios' : 'Agregar'}</Button><Button type="button" variant="ghost" onClick={resetServiceForm}>Cancelar</Button></div></form></div><InfoNote tone="lilac"><ImagePlus size={15} /> Cloudinary · cloud_name: {CLOUDINARY_CONFIG.cloudName || 'pendiente'} · upload_preset: {CLOUDINARY_CONFIG.uploadPreset}. {cloudinaryUploadNote}</InfoNote></>}<div className="workspace-card"><div className="table-toolbar"><div className="listing-search"><Search size={16} /><input value={query} maxLength={TEXT_MAX_LENGTH} onChange={(event) => setQuery(limitText(event.target.value))} placeholder="Buscar por servicio, descripción, precio o estado" /></div><Badge tone="neutral">{rows.length} servicios</Badge></div><Table columns={columns} rows={rows} /></div></AnimatedPage>
 }
 
 export function AdminAvailabilityPage() {
-  const { data, createAvailability, updateAvailability } = useApp()
+  const { data, createAvailability, updateAvailability, notify } = useApp()
   const activeSalons = data.salones.filter(isVisibleSalon)
   const activeSalonIds = activeSalons.map((salon) => salon.id)
   const [open, setOpen] = useState(false)
@@ -1088,12 +1105,17 @@ export function AdminAvailabilityPage() {
   const [query, setQuery] = useState('')
   const [form, setForm] = useState({ salonId: activeSalons[0]?.id ?? '', fecha: '', precio: '', estado: 'disponible' })
   const selectedSalon = activeSalons.find((salon) => salon.id === form.salonId)
+  const todayInputDate = getTodayDateInputValue()
   const submit = async (event) => {
     event.preventDefault()
+    if (!form.fecha || isPastDateValue(form.fecha)) {
+      notify('No puedes guardar fechas anteriores a hoy.', 'warning')
+      return
+    }
     await createAvailability({
       estado: form.estado,
       fecha: form.fecha,
-      precio: toBoundedNumber(form.precio || selectedSalon?.basePrice || 0),
+      precio: toBoundedPrice(form.precio || selectedSalon?.basePrice || 0),
       salonesIds: [form.salonId],
     })
     setForm({ salonId: activeSalons[0]?.id ?? '', fecha: '', precio: '', estado: 'disponible' })
@@ -1108,7 +1130,7 @@ export function AdminAvailabilityPage() {
     })
     .sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)))
   const columns = [{ key: 'fecha', label: 'Fecha', render: (row) => <strong>{formatDate(row.fecha, 'd MMM yyyy')}</strong> }, { key: 'salon', label: 'Salón', render: (row) => data.salones.filter((salon) => row.salonesIds.includes(salon.id)).map((salon) => salon.name).join(', ') }, { key: 'precio', label: 'Precio', render: (row) => formatCurrency(row.precio) }, { key: 'estado', label: 'Estado', render: (row) => <select className="status-select" value={row.estado === 'bloqueado' ? 'bloqueada' : row.estado} onChange={(event) => updateAvailability(row.id, event.target.value)}><option value="disponible">disponible</option><option value="reservada">reservada</option><option value="bloqueada">bloqueada</option></select> }, { key: 'actions', label: '', render: (row) => <button className="icon-button" type="button" title="Bloquear fecha" onClick={() => updateAvailability(row.id, 'bloqueada')}><Eye size={15} /></button> }]
-  return <AnimatedPage className="panel-page"><PanelIntro eyebrow="Calendario" title="Gestión de disponibilidad" description="Define qué fechas pueden reservarse y bajo qué precio." crumbs={[{ label: 'Admin', to: '/admin' }, { label: 'Disponibilidad' }]} actions={<Button variant="secondary" icon={Plus} onClick={() => setOpen((value) => !value)}>Nueva fecha</Button>} />{open && <div className="workspace-card inline-form-card" data-reveal><div><span className="eyebrow">Nueva disponibilidad</span><h2>Crear fecha reservable</h2><p>La fecha se guarda en disponibilidad con salonesIds como array.</p></div><form className="inline-form" onSubmit={submit}><select required value={form.salonId} onChange={(event) => setForm({ ...form, salonId: event.target.value, precio: normalizeNumberInput(activeSalons.find((salon) => salon.id === event.target.value)?.basePrice ?? form.precio) })}>{activeSalons.map((salon) => <option key={salon.id} value={salon.id}>{salon.name}</option>)}</select><input required type="date" value={form.fecha} onChange={(event) => setForm({ ...form, fecha: event.target.value })} /><input type="number" min="0" max={NUMBER_MAX_VALUE} placeholder={`Precio sugerido ${formatCurrency(selectedSalon?.basePrice ?? 0)}`} value={form.precio} onChange={(event) => setForm({ ...form, precio: normalizeNumberInput(event.target.value) })} /><select value={form.estado} onChange={(event) => setForm({ ...form, estado: event.target.value })}><option value="disponible">disponible</option><option value="reservada">reservada</option><option value="bloqueada">bloqueada</option></select><Button type="submit" size="sm">Guardar fecha</Button></form></div>}<div className="workspace-card"><div className="table-toolbar table-toolbar--stack"><div className="listing-search"><Search size={16} /><input value={query} maxLength={TEXT_MAX_LENGTH} onChange={(event) => setQuery(limitText(event.target.value))} placeholder="Buscar por salón, fecha, precio o estado" /></div><div className="table-toolbar__filters">{['todas', 'disponible', 'reservada', 'bloqueada'].map((state) => <button type="button" key={state} className={clsx('toolbar-chip', filter === state && 'toolbar-chip--active')} onClick={() => setFilter(state)}><CalendarDays size={14} /> {state === 'todas' ? 'Todas las fechas' : state}</button>)}</div><span className="table-date-note"><CalendarDays size={14} /> Fechas desde Firestore</span></div><Table columns={columns} rows={rows} /></div><InfoNote tone="lilac"><CalendarDays size={15} /> Los clientes sólo pueden reservar fechas en estado disponible. Al reservar, la fecha cambia a reservada.</InfoNote></AnimatedPage>
+  return <AnimatedPage className="panel-page"><PanelIntro eyebrow="Calendario" title="Gestión de disponibilidad" description="Define qué fechas pueden reservarse y bajo qué precio." crumbs={[{ label: 'Admin', to: '/admin' }, { label: 'Disponibilidad' }]} actions={<Button variant="secondary" icon={Plus} onClick={() => setOpen((value) => !value)}>Nueva fecha</Button>} />{open && <div className="workspace-card inline-form-card" data-reveal><div><span className="eyebrow">Nueva disponibilidad</span><h2>Crear fecha reservable</h2><p>La fecha se guarda en disponibilidad con salonesIds como array.</p></div><form className="inline-form" onSubmit={submit}><select required value={form.salonId} onChange={(event) => setForm({ ...form, salonId: event.target.value, precio: normalizePriceInput(activeSalons.find((salon) => salon.id === event.target.value)?.basePrice ?? form.precio) })}>{activeSalons.map((salon) => <option key={salon.id} value={salon.id}>{salon.name}</option>)}</select><input required type="date" min={todayInputDate} value={form.fecha} onChange={(event) => setForm({ ...form, fecha: event.target.value })} /><input type="number" min="0" max={PRICE_MAX_VALUE} placeholder={`Precio sugerido ${formatCurrency(selectedSalon?.basePrice ?? 0)}`} value={form.precio} onChange={(event) => setForm({ ...form, precio: normalizePriceInput(event.target.value) })} /><select value={form.estado} onChange={(event) => setForm({ ...form, estado: event.target.value })}><option value="disponible">disponible</option><option value="reservada">reservada</option><option value="bloqueada">bloqueada</option></select><Button type="submit" size="sm">Guardar fecha</Button></form></div>}<div className="workspace-card"><div className="table-toolbar table-toolbar--stack"><div className="listing-search"><Search size={16} /><input value={query} maxLength={TEXT_MAX_LENGTH} onChange={(event) => setQuery(limitText(event.target.value))} placeholder="Buscar por salón, fecha, precio o estado" /></div><div className="table-toolbar__filters">{['todas', 'disponible', 'reservada', 'bloqueada'].map((state) => <button type="button" key={state} className={clsx('toolbar-chip', filter === state && 'toolbar-chip--active')} onClick={() => setFilter(state)}><CalendarDays size={14} /> {state === 'todas' ? 'Todas las fechas' : state}</button>)}</div><span className="table-date-note"><CalendarDays size={14} /> Fechas desde Firestore</span></div><Table columns={columns} rows={rows} /></div><InfoNote tone="lilac"><CalendarDays size={15} /> Los clientes sólo pueden reservar fechas en estado disponible. Al reservar, la fecha cambia a reservada.</InfoNote></AnimatedPage>
 }
 
 export function AdminReservationsPage() {

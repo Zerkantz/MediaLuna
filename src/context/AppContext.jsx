@@ -35,6 +35,7 @@ import {
   subscribeToAuthState,
 } from '../services/authService'
 import { createStripeCheckout, getStripeBackendUrl, syncStripeCheckout } from '../services/stripeService'
+import { getWeekendSurcharge, isPastDateValue } from '../utils/formLimits'
 
 /* The provider and its hook are intentionally colocated for the app shell. */
 /* eslint-disable react-refresh/only-export-components */
@@ -759,6 +760,7 @@ export function AppProvider({ children }) {
     const salon = data.salones.find((item) => item.id === bookingDraft.salonId)
     if (!currentUser?.id || currentUser.rol !== 'cliente') return { ok: false, message: 'Inicia sesión como cliente para crear la reservación.' }
     if (!salon) return { ok: false, message: 'Selecciona un salón válido.' }
+    if (isPastDateValue(bookingDraft.date)) return { ok: false, message: 'No puedes reservar fechas anteriores a hoy.' }
 
     const selectedAvailability = findAvailabilityForSalonDate(data.disponibilidad, salon.id, bookingDraft.date)
     if (!selectedAvailability) {
@@ -773,8 +775,9 @@ export function AppProvider({ children }) {
     const totalServices = services.reduce((total, service) => total + Number(service.precio || 0), 0)
     const owner = findSalonOwner(data.usuarios, salon)
     const priceSalon = Number(selectedAvailability.precio ?? salon.basePrice ?? 0) || 0
+    const extraFinDeSemana = getWeekendSurcharge(bookingDraft.date)
     const salonIds = [salon.id]
-    const total = priceSalon + totalServices
+    const total = priceSalon + extraFinDeSemana + totalServices
     const fechaCreacion = format(new Date(), 'yyyy-MM-dd')
 
     console.log('[reservaciones] creando reservacion')
@@ -788,6 +791,7 @@ export function AppProvider({ children }) {
       identificadorChat: PENDING_IDENTIFIER,
       identificadorPagoStripe: PENDING_IDENTIFIER,
       identificadorSalaVideo: PENDING_IDENTIFIER,
+      extraFinDeSemana,
       precioSalon: priceSalon,
       salonesIds: salonIds,
       serviciosIds: serviceIds,
@@ -868,7 +872,7 @@ export function AppProvider({ children }) {
       const pago = data.pagos.find((item) => item.reservacionId === reservacion.id)
         ?? await getPagoPorReservacion(reservacion.id)
       const total = Number(
-        pago?.monto ?? reservacion.total ?? (Number(reservacion.precioSalon || 0) + Number(reservacion.totalServicios || 0)),
+        pago?.monto ?? reservacion.total ?? (Number(reservacion.precioSalon || 0) + Number(reservacion.extraFinDeSemana || 0) + Number(reservacion.totalServicios || 0)),
       )
       const payload = {
         reservationId: reservacion.id,
