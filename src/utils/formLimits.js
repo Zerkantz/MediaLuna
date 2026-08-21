@@ -1,8 +1,8 @@
-export const TEXT_MAX_LENGTH = 50
+export const TEXT_MAX_LENGTH = 300
+export const SEARCH_MAX_LENGTH = 50
 export const SALON_DESCRIPTION_MAX_LENGTH = 300
 export const NUMBER_MAX_VALUE = 9999
 export const PRICE_MAX_VALUE = 999999
-export const WEEKEND_SURCHARGE = 1500
 export const PHONE_MAX_LENGTH = 13
 export const PHONE_NATIONAL_DIGITS = 10
 
@@ -71,7 +71,7 @@ export const isWeekendDate = (value) => {
   const date = parseDateInput(value)
   if (!date) return false
   const day = date.getDay()
-  return day === 0 || day === 6
+  return day === 0 || day === 5 || day === 6
 }
 
-export const getWeekendSurcharge = (value) => isWeekendDate(value) ? WEEKEND_SURCHARGE : 0
+export const getWeekendSurcharge = (value, extra = 0) => isWeekendDate(value) ? toBoundedPrice(extra) : 0

@@ -4,7 +4,7 @@ import { AlertCircle, Loader2, MessageCircle, Send } from 'lucide-react'
 import { createStreamChannel, getStreamToken } from '../services/backendService'
 import { TEXT_MAX_LENGTH, limitText } from '../utils/formLimits'
 
-export function StreamChatWidget({ reservation, currentUser, counterpartName, counterpartRole, onMessageSent }) {
+export function StreamChatWidget({ reservation, currentUser, counterpartName, counterpartRole, onMessageSent, disabled = false, disabledMessage = 'Chat eliminado por el dueño.' }) {
   const [channel, setChannel] = useState(null)
   const [messages, setMessages] = useState([])
   const [inputText, setInputText] = useState('')
@@ -30,6 +30,13 @@ export function StreamChatWidget({ reservation, currentUser, counterpartName, co
   }, [messages])
 
   useEffect(() => {
+    if (disabled) {
+      setLoading(false)
+      setError(null)
+      setChannel(null)
+      setInputText('')
+      return
+    }
     if (!currentUser?.id || !isParticipant) return
 
     let isMounted = true
@@ -100,11 +107,11 @@ export function StreamChatWidget({ reservation, currentUser, counterpartName, co
         chatClient.disconnectUser().catch((err) => console.error('Error desconectando Stream user:', err))
       }
     }
-  }, [channelId, clientId, currentUser?.id, currentUser?.nombre, isParticipant, ownerId, reservation.fecha, reservation.id])
+  }, [channelId, clientId, currentUser?.id, currentUser?.nombre, disabled, isParticipant, ownerId, reservation.fecha, reservation.id])
 
   const handleSendMessage = async (e) => {
     e.preventDefault()
-    if (!inputText.trim() || !channel) return
+    if (disabled || !inputText.trim() || !channel) return
 
     const text = inputText.trim()
     setInputText('')
@@ -154,6 +161,11 @@ export function StreamChatWidget({ reservation, currentUser, counterpartName, co
             <AlertCircle size={20} />
             <span>{error}</span>
           </div>
+        ) : disabled ? (
+          <div className="chat-empty-messages">
+            <AlertCircle size={28} />
+            <p>{disabledMessage}</p>
+          </div>
         ) : messages.length === 0 ? (
           <div className="chat-empty-messages">
             <MessageCircle size={28} />
@@ -183,15 +195,16 @@ export function StreamChatWidget({ reservation, currentUser, counterpartName, co
       </div>
 
       <form className="chat-input-form" onSubmit={handleSendMessage}>
+        {disabled && <div className="chat-locked-message"><AlertCircle size={16} /> {disabledMessage}</div>}
         <input
           type="text"
-          placeholder="Escribe un mensaje…"
+          placeholder={disabled ? disabledMessage : 'Escribe un mensaje…'}
           value={inputText}
           maxLength={TEXT_MAX_LENGTH}
           onChange={(e) => setInputText(limitText(e.target.value))}
-          disabled={loading || sending || !channel}
+          disabled={disabled || loading || sending || !channel}
         />
-        <button type="submit" disabled={loading || sending || !channel || !inputText.trim()} className="chat-send-button">
+        <button type="submit" disabled={disabled || loading || sending || !channel || !inputText.trim()} className="chat-send-button">
           <Send size={16} />
         </button>
       </form>

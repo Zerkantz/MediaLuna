@@ -5,7 +5,6 @@ import {
   BarChart3,
   Bell,
   CalendarDays,
-  ChevronDown,
   CheckCheck,
   CircleUserRound,
   ClipboardList,
@@ -127,7 +126,7 @@ export function PanelLayout({ role }) {
   return <div className={clsx('panel-shell', collapsed && 'panel-shell--collapsed')}>
     <aside className={clsx('panel-sidebar', mobileOpen && 'panel-sidebar--open')}>
       <div className="panel-sidebar__top"><BrandMark compact /><button className="sidebar-close" type="button" onClick={() => setMobileOpen(false)}><X size={18} /></button></div>
-      <div className="panel-switcher"><span className="panel-switcher__label">{config.label}</span><div className="panel-switcher__current"><span className="avatar avatar--small">{currentUser?.nombre?.[0] ?? 'M'}</span><span><strong>{currentUser?.nombre ?? 'Usuario demo'}</strong><small>{config.title}</small></span><ChevronDown size={14} /></div>{authMode === 'demo' && <div className="role-switcher"><button type="button" onClick={() => switchRole('cliente')}>Ver como cliente</button><button type="button" onClick={() => switchRole('dueno')}>Ver como dueño</button><button type="button" onClick={() => switchRole('administrador')}>Ver como admin</button></div>}</div>
+      <div className="panel-switcher"><span className="panel-switcher__label">{config.label}</span><div className="panel-switcher__current"><span className="avatar avatar--small">{currentUser?.nombre?.[0] ?? 'M'}</span><span><strong>{currentUser?.nombre ?? 'Usuario demo'}</strong><small>{config.title}</small></span></div>{authMode === 'demo' && <div className="role-switcher"><button type="button" onClick={() => switchRole('cliente')}>Ver como cliente</button><button type="button" onClick={() => switchRole('dueno')}>Ver como dueño</button><button type="button" onClick={() => switchRole('administrador')}>Ver como admin</button></div>}</div>
       <nav className="panel-nav">{config.links.map(({ to, label, icon: Icon, end }) => <NavLink key={to} to={to} end={end} className={({ isActive }) => clsx('panel-nav__link', isActive && 'panel-nav__link--active')} onClick={() => setMobileOpen(false)}><Icon size={17} /><span>{label}</span></NavLink>)}</nav>
       <div className="panel-sidebar__bottom"><Link to="/" className="panel-nav__link"><Home size={17} /><span>Volver al sitio</span></Link><button type="button" className="panel-nav__link panel-nav__button panel-nav__button--danger" onClick={async () => { await logout(); setMobileOpen(false); navigate('/login') }}><LogOut size={17} /><span>Cerrar sesión</span></button><div className="sidebar-help"><Moon size={16} /><span><strong>MediaLuna</strong><small>Tu noche, bien cuidada.</small></span></div></div>
     </aside>

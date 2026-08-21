@@ -9,7 +9,6 @@ import {
   CircleAlert,
   Compass,
   CreditCard,
-  Heart,
   MapPin,
   Moon,
   Search,
@@ -38,6 +37,7 @@ import {
 } from '../components/ui'
 import {
   NUMBER_MAX_VALUE,
+  SEARCH_MAX_LENGTH,
   TEXT_MAX_LENGTH,
   getTodayDateInputValue,
   getWeekendSurcharge,
@@ -163,19 +163,21 @@ export function SalonesPage() {
     capacity: homeGuests || params.get('capacity') || '',
     onlyAvailable: params.get('available') === 'true',
   })
-  const [saved, setSaved] = useState([])
+  const [nameQuery, setNameQuery] = useState('')
   const visibleSalons = data.salones.filter(isVisibleSalon)
   const hasHomeFilters = Boolean(homeLocation || homeDate || homeGuests)
   const clearFilters = () => {
     setFilters({ capacity: '', onlyAvailable: false })
+    setNameQuery('')
     navigate('/salones', { replace: true })
   }
   const salons = visibleSalons.filter((salon) => {
+    const matchesName = !nameQuery || String(salon.name ?? '').toLowerCase().includes(nameQuery.toLowerCase())
     const matchesLocation = salonMatchesCity(salon, homeLocation)
     const matchesCapacity = !filters.capacity || salon.capacity >= Number(filters.capacity)
     const matchesDate = !homeDate || (!isPastDateValue(homeDate) && salonIsAvailableOnDate(data, salon.id, homeDate))
     const matchesAvailability = !filters.onlyAvailable || salonHasAvailableDates(data, salon.id)
-    return matchesLocation && matchesCapacity && matchesDate && matchesAvailability
+    return matchesName && matchesLocation && matchesCapacity && matchesDate && matchesAvailability
   })
 
   return (
@@ -188,6 +190,15 @@ export function SalonesPage() {
           description="Explora salones con personalidad para bodas, cenas, lanzamientos y noches que no necesitan explicación."
         />
         <div className="listing-toolbar listing-toolbar--simple" data-reveal>
+          <div className="listing-search listing-name-search">
+            <Search size={16} />
+            <input
+              value={nameQuery}
+              maxLength={SEARCH_MAX_LENGTH}
+              onChange={(event) => setNameQuery(limitText(event.target.value, SEARCH_MAX_LENGTH))}
+              placeholder="Buscar salón por nombre"
+            />
+          </div>
           <select
             aria-label="Filtrar por capacidad"
             value={filters.capacity}
@@ -221,25 +232,13 @@ export function SalonesPage() {
         )}
         {salons.length ? (
           <div className="salon-grid">
-            {salons.map((salon) => (
-              <div className="salon-card-wrap" key={salon.id}>
-                <SalonCard salon={salon} />
-                <button
-                  type="button"
-                  className={clsx('save-button', saved.includes(salon.id) && 'save-button--active')}
-                  onClick={() => setSaved((items) => items.includes(salon.id) ? items.filter((id) => id !== salon.id) : [...items, salon.id])}
-                >
-                  <Heart size={15} fill={saved.includes(salon.id) ? 'currentColor' : 'none'} />
-                  {saved.includes(salon.id) ? 'Guardado' : 'Guardar'}
-                </button>
-              </div>
-            ))}
+            {salons.map((salon) => <SalonCard salon={salon} key={salon.id} />)}
           </div>
         ) : (
           <EmptyState
             icon={Compass}
-            title="No hay salones disponibles con esos filtros."
-            description="Prueba con otra fecha o capacidad para ver más espacios."
+            title={nameQuery ? 'No encontramos salones con ese nombre.' : 'No hay salones disponibles con esos filtros.'}
+            description={nameQuery ? 'Prueba con otro nombre o limpia la búsqueda.' : 'Prueba con otra fecha o capacidad para ver más espacios.'}
             action={<Button variant="secondary" onClick={clearFilters}>Limpiar filtros</Button>}
           />
         )}
@@ -281,8 +280,8 @@ export function BookingDatePage() {
   const [dateError, setDateError] = useState('')
   if (!salon) return <AnimatedPage><EmptyState title="Salón no encontrado" description="Regresa a la lista de espacios para continuar." action={<Button to="/salones">Ver salones</Button>} /></AnimatedPage>
   const selectedAvailability = salonAvailability.find((item) => item.fecha === selected)
-  const selectedPrice = Number(selectedAvailability?.precio ?? salon.basePrice ?? 0) || 0
-  const weekendSurcharge = getWeekendSurcharge(selected)
+  const selectedPrice = Number(salon.basePrice ?? selectedAvailability?.precio ?? 0) || 0
+  const weekendSurcharge = getWeekendSurcharge(selected, salon.extraFinSemana)
   const choose = (date) => {
     if (isPastDateValue(date) || !availableDates.includes(date)) {
       const state = salonAvailability.find((item) => item.fecha === date)?.estado
@@ -300,7 +299,7 @@ export function BookingDatePage() {
     selectDate(selected)
     navigate(`/reservar/${id}/servicios`)
   }
-  return <AnimatedPage><div className="container booking-page"><Breadcrumbs items={[{ label: 'Salones', to: '/salones' }, { label: salon.name, to: `/salones/${id}` }, { label: 'Fecha' }]} /><div className="booking-heading"><div><span className="eyebrow">Reserva tu espacio</span><h1>¿Cuándo lo celebramos?</h1><p>Elige una fecha disponible para <strong>{salon.name}</strong>.</p></div><ProgressSteps active={1} /></div><div className="booking-layout"><section className="booking-main"><div className="booking-card"><div className="booking-card__header"><span className="step-number">01</span><div><h2>Selecciona una fecha</h2><p>Las fechas mostradas vienen de Firestore para este salón.</p></div></div>{availabilityDates.length ? <><TinyCalendar dates={availabilityDates} selected={selected} onSelect={choose} />{!availableDates.length && <InfoNote tone="warning">No hay fechas disponibles para seleccionar en este momento.</InfoNote>}</> : <EmptyState icon={CalendarDays} title="Sin disponibilidad cargada" description="Administración debe cargar fechas disponibles para este salón antes de reservar." />}{dateError && <InfoNote tone="warning">{dateError}</InfoNote>}</div><div className="booking-card booking-card--muted"><div className="booking-card__header"><span className="step-number">02</span><div><h2>Tu celebración</h2><p>Cuéntanos un poco más para preparar la experiencia.</p></div></div><div className="form-grid"><label className="field"><span>Tipo de evento</span><select><option>Boda / celebración social</option><option>Cena privada</option><option>Evento corporativo</option><option>Otro</option></select></label><label className="field"><span>Número de invitados</span><input type="number" min="1" max={NUMBER_MAX_VALUE} defaultValue={Math.min(salon.capacity > 100 ? 100 : 40, NUMBER_MAX_VALUE)} onInput={(event) => { event.currentTarget.value = normalizeNumberInput(event.currentTarget.value, { min: 1 }) }} /></label></div></div></section><aside className="booking-aside"><div className="booking-summary-card"><img src={salon.photos?.[0]} alt={salon.name} /><div className="booking-summary-card__body"><span className="eyebrow">Tu selección</span><h3>{salon.name}</h3><p><MapPin size={14} /> {getSalonLocation(salon)}</p><div className="summary-line"><span>Precio del salón</span><strong>{formatCurrency(selectedPrice)}</strong></div><div className="summary-line"><span>Extra fin de semana</span><strong>{formatCurrency(weekendSurcharge)}</strong></div><div className="summary-line"><span>Fecha</span><strong>{selected ? formatDate(selected, 'd MMM yyyy') : 'Sin seleccionar'}</strong></div><div className="summary-divider" /><div className="summary-total"><span>Subtotal</span><strong>{formatCurrency(selectedPrice + weekendSurcharge)}</strong></div></div></div><Button className="full-button" onClick={goNext} disabled={!selected} icon={ArrowRight}>Continuar con extras</Button><p className="secure-copy"><ShieldCheck size={14} /> No se realizará ningún cargo todavía</p></aside></div></div></AnimatedPage>
+  return <AnimatedPage><div className="container booking-page"><Breadcrumbs items={[{ label: 'Salones', to: '/salones' }, { label: salon.name, to: `/salones/${id}` }, { label: 'Fecha' }]} /><div className="booking-heading"><div><span className="eyebrow">Reserva tu espacio</span><h1>¿Cuándo lo celebramos?</h1><p>Elige una fecha disponible para <strong>{salon.name}</strong>.</p></div><ProgressSteps active={1} /></div><div className="booking-layout"><section className="booking-main"><div className="booking-card"><div className="booking-card__header"><span className="step-number">01</span><div><h2>Selecciona una fecha</h2><p>Las fechas mostradas vienen de Firestore para este salón.</p></div></div>{availabilityDates.length ? <><TinyCalendar dates={availabilityDates} selected={selected} onSelect={choose} />{!availableDates.length && <InfoNote tone="warning">No hay fechas disponibles para seleccionar en este momento.</InfoNote>}</> : <EmptyState icon={CalendarDays} title="Sin disponibilidad cargada" description="Administración debe cargar fechas disponibles para este salón antes de reservar." />}{dateError && <InfoNote tone="warning">{dateError}</InfoNote>}</div><div className="booking-card booking-card--muted"><div className="booking-card__header"><span className="step-number">02</span><div><h2>Tu celebración</h2><p>Cuéntanos un poco más para preparar la experiencia.</p></div></div><div className="form-grid"><label className="field"><span>Tipo de evento</span><select><option>Boda / celebración social</option><option>Cena privada</option><option>Evento corporativo</option><option>Otro</option></select></label><label className="field"><span>Número de invitados</span><input type="number" min="1" max={NUMBER_MAX_VALUE} defaultValue={Math.min(salon.capacity > 100 ? 100 : 40, NUMBER_MAX_VALUE)} onInput={(event) => { event.currentTarget.value = normalizeNumberInput(event.currentTarget.value, { min: 1 }) }} /></label></div></div></section><aside className="booking-aside"><div className="booking-summary-card"><img src={salon.photos?.[0]} alt={salon.name} /><div className="booking-summary-card__body"><span className="eyebrow">Tu selección</span><h3>{salon.name}</h3><p><MapPin size={14} /> {getSalonLocation(salon)}</p><div className="summary-line"><span>Precio base del salón</span><strong>{formatCurrency(selectedPrice)}</strong></div>{weekendSurcharge > 0 && <div className="summary-line"><span>Extra por fin de semana</span><strong>{formatCurrency(weekendSurcharge)}</strong></div>}<div className="summary-line"><span>Fecha</span><strong>{selected ? formatDate(selected, 'd MMM yyyy') : 'Sin seleccionar'}</strong></div><div className="summary-divider" /><div className="summary-total"><span>Subtotal</span><strong>{formatCurrency(selectedPrice + weekendSurcharge)}</strong></div></div></div><Button className="full-button" onClick={goNext} disabled={!selected} icon={ArrowRight}>Continuar con extras</Button><p className="secure-copy"><ShieldCheck size={14} /> No se realizará ningún cargo todavía</p></aside></div></div></AnimatedPage>
 }
 
 export function BookingServicesPage() {
@@ -311,11 +310,11 @@ export function BookingServicesPage() {
   const services = data.servicios.filter((service) => service.activo && salon?.serviciosIds?.includes(service.id))
   const totalServices = services.filter((service) => bookingDraft.servicesIds.includes(service.id)).reduce((sum, service) => sum + Number(service.precio || 0), 0)
   const selectedAvailability = getAvailabilityForSalon(data, id).find((item) => item.fecha === bookingDraft.date)
-  const priceSalon = Number(selectedAvailability?.precio ?? salon?.basePrice ?? 0) || 0
-  const weekendSurcharge = getWeekendSurcharge(bookingDraft.date)
+  const priceSalon = Number(salon?.basePrice ?? selectedAvailability?.precio ?? 0) || 0
+  const weekendSurcharge = getWeekendSurcharge(bookingDraft.date, salon?.extraFinSemana)
   const total = priceSalon + weekendSurcharge + totalServices
   if (!salon) return <AnimatedPage><EmptyState title="Salón no encontrado" description="Regresa a la lista de espacios para continuar." action={<Button to="/salones">Ver salones</Button>} /></AnimatedPage>
-  return <AnimatedPage><div className="container booking-page"><Breadcrumbs items={[{ label: 'Salones', to: '/salones' }, { label: salon.name, to: `/salones/${id}` }, { label: 'Extras' }]} /><div className="booking-heading"><div><span className="eyebrow">Personaliza la noche</span><h1>Los detalles hacen la diferencia.</h1><p>Selecciona los servicios que quieres sumar a tu reservación.</p></div><ProgressSteps active={2} /></div><div className="booking-layout"><section className="booking-main"><div className="service-select-grid">{services.map((service) => { const active = bookingDraft.servicesIds.includes(service.id); return <button type="button" className={clsx('service-select-card', active && 'service-select-card--active')} onClick={() => toggleService(service.id)} key={service.id}><div className="service-select-card__image"><img src={service.urlImagen} alt={service.nombre} />{active && <span className="service-check"><Check size={14} /></span>}</div><div className="service-select-card__body"><div><h3>{service.nombre}</h3><p>{service.descripcion}</p></div><div className="service-select-card__price"><strong>{formatCurrency(service.precio)}</strong><small>por evento</small></div></div></button> })}</div><InfoNote tone="lilac"><strong>¿Tienes algo especial en mente?</strong> El equipo puede ayudarte a armar una propuesta a la medida.</InfoNote></section><aside className="booking-aside"><div className="booking-summary-card booking-summary-card--plain"><div className="booking-summary-card__body"><span className="eyebrow">Tu selección</span><h3>{salon.name}</h3><p><CalendarDays size={14} /> {formatDate(bookingDraft.date, 'd MMMM yyyy')}</p><div className="summary-line"><span>Precio del salón</span><strong>{formatCurrency(priceSalon)}</strong></div><div className="summary-line"><span>Extra fin de semana</span><strong>{formatCurrency(weekendSurcharge)}</strong></div><div className="summary-line"><span>Servicios extra</span><strong>{formatCurrency(totalServices)}</strong></div><div className="summary-divider" /><div className="summary-total"><span>Total estimado</span><strong>{formatCurrency(total)}</strong></div></div></div><Button className="full-button" to={`/reservar/${id}/resumen`} icon={ArrowRight}>Ver resumen</Button><Button className="full-button" variant="ghost" onClick={() => navigate(`/reservar/${id}/fecha`)} icon={ChevronLeft}>Cambiar fecha</Button></aside></div></div></AnimatedPage>
+  return <AnimatedPage><div className="container booking-page"><Breadcrumbs items={[{ label: 'Salones', to: '/salones' }, { label: salon.name, to: `/salones/${id}` }, { label: 'Extras' }]} /><div className="booking-heading"><div><span className="eyebrow">Personaliza la noche</span><h1>Los detalles hacen la diferencia.</h1><p>Selecciona los servicios que quieres sumar a tu reservación.</p></div><ProgressSteps active={2} /></div><div className="booking-layout"><section className="booking-main"><div className="service-select-grid">{services.map((service) => { const active = bookingDraft.servicesIds.includes(service.id); return <button type="button" className={clsx('service-select-card', active && 'service-select-card--active')} onClick={() => toggleService(service.id)} key={service.id}><div className="service-select-card__image"><img src={service.urlImagen} alt={service.nombre} />{active && <span className="service-check"><Check size={14} /></span>}</div><div className="service-select-card__body"><div><h3>{service.nombre}</h3><p>{service.descripcion}</p></div><div className="service-select-card__price"><strong>{formatCurrency(service.precio)}</strong><small>por evento</small></div></div></button> })}</div><InfoNote tone="lilac"><strong>¿Tienes algo especial en mente?</strong> El equipo puede ayudarte a armar una propuesta a la medida.</InfoNote></section><aside className="booking-aside"><div className="booking-summary-card booking-summary-card--plain"><div className="booking-summary-card__body"><span className="eyebrow">Tu selección</span><h3>{salon.name}</h3><p><CalendarDays size={14} /> {formatDate(bookingDraft.date, 'd MMMM yyyy')}</p><div className="summary-line"><span>Precio base del salón</span><strong>{formatCurrency(priceSalon)}</strong></div>{weekendSurcharge > 0 && <div className="summary-line"><span>Extra por fin de semana</span><strong>{formatCurrency(weekendSurcharge)}</strong></div>}<div className="summary-line"><span>Servicios extra</span><strong>{formatCurrency(totalServices)}</strong></div><div className="summary-divider" /><div className="summary-total"><span>Total estimado</span><strong>{formatCurrency(total)}</strong></div></div></div><Button className="full-button" to={`/reservar/${id}/resumen`} icon={ArrowRight}>Ver resumen</Button><Button className="full-button" variant="ghost" onClick={() => navigate(`/reservar/${id}/fecha`)} icon={ChevronLeft}>Cambiar fecha</Button></aside></div></div></AnimatedPage>
 }
 
 export function BookingSummaryPage() {
@@ -326,8 +325,8 @@ export function BookingSummaryPage() {
   const services = data.servicios.filter((service) => bookingDraft.servicesIds.includes(service.id))
   const totalServices = services.reduce((sum, service) => sum + Number(service.precio || 0), 0)
   const selectedAvailability = getAvailabilityForSalon(data, id).find((item) => item.fecha === bookingDraft.date)
-  const priceSalon = Number(selectedAvailability?.precio ?? salon?.basePrice ?? 0) || 0
-  const weekendSurcharge = getWeekendSurcharge(bookingDraft.date)
+  const priceSalon = Number(salon?.basePrice ?? selectedAvailability?.precio ?? 0) || 0
+  const weekendSurcharge = getWeekendSurcharge(bookingDraft.date, salon?.extraFinSemana)
   const total = priceSalon + weekendSurcharge + totalServices
   const [terms, setTerms] = useState(false)
   const [creating, setCreating] = useState(false)
@@ -358,7 +357,7 @@ export function BookingSummaryPage() {
     }
     navigate(`/cliente/reservaciones/${result.reservation.id}`)
   }
-  return <AnimatedPage><div className="container booking-page"><Breadcrumbs items={[{ label: 'Salones', to: '/salones' }, { label: salon.name, to: `/salones/${id}` }, { label: 'Resumen' }]} /><div className="booking-heading"><div><span className="eyebrow">Casi está</span><h1>Revisa tu reservación.</h1><p>Todo listo para empezar a crear una noche especial.</p></div><ProgressSteps active={3} /></div><div className="booking-layout"><section className="booking-main"><div className="review-card"><div className="review-card__top"><img src={salon.photos?.[0]} alt={salon.name} /><div><Badge tone="dark">{salon.type}</Badge><h2>{salon.name}</h2><p><MapPin size={14} /> {getSalonLocation(salon)}</p></div><Link to={`/reservar/${id}/fecha`} className="edit-link">Editar <ArrowRight size={14} /></Link></div><div className="review-grid"><div><span className="review-label">Fecha</span><strong><CalendarDays size={15} /> {formatDate(bookingDraft.date, 'EEEE d MMMM yyyy')}</strong></div><div><span className="review-label">Capacidad</span><strong><UsersRound size={15} /> Hasta {salon.capacity} personas</strong></div><div><span className="review-label">Dirección</span><strong><MapPin size={15} /> {salon.direccion}</strong></div><div><span className="review-label">Estado</span><strong><Badge tone="warning" dot>Pendiente de confirmación</Badge></strong></div></div></div><div className="review-card"><div className="review-section-heading"><div><span className="step-number">+</span><h2>Extras seleccionados</h2></div><Link to={`/reservar/${id}/servicios`} className="edit-link">Editar <ArrowRight size={14} /></Link></div>{services.length ? services.map((service) => <div className="review-service" key={service.id}><span><Sparkles size={15} /></span><strong>{service.nombre}</strong><span>{formatCurrency(service.precio)}</span></div>) : <p className="muted-copy">No agregaste servicios extra.</p>}</div>{error && <InfoNote tone="warning">{error}</InfoNote>}<InfoNote tone="warning"><strong>Pago seguro con Stripe.</strong> Al confirmar se creará la reservación y el pago quedará pendiente de conexión.</InfoNote></section><aside className="booking-aside"><div className="total-card"><span className="eyebrow">Resumen de inversión</span><div className="total-card__line"><span>Precio salón</span><strong>{formatCurrency(priceSalon)}</strong></div><div className="total-card__line"><span>Extra fin de semana</span><strong>{formatCurrency(weekendSurcharge)}</strong></div><div className="total-card__line"><span>Servicios extra</span><strong>{formatCurrency(totalServices)}</strong></div><div className="total-card__line total-card__grand"><span>Total</span><strong>{formatCurrency(total)}</strong></div><label className="terms-check"><input type="checkbox" checked={terms} onChange={(event) => setTerms(event.target.checked)} /><span>He leído y acepto las condiciones de reservación.</span></label><Button className="full-button" onClick={confirm} disabled={!terms || creating} icon={CreditCard}>{creating ? 'Creando reservación…' : 'Confirmar reservación'}</Button><p className="stripe-placeholder"><WalletCards size={14} /> Pagar: Pendiente de conexión con Stripe</p></div></aside></div></div></AnimatedPage>
+  return <AnimatedPage><div className="container booking-page"><Breadcrumbs items={[{ label: 'Salones', to: '/salones' }, { label: salon.name, to: `/salones/${id}` }, { label: 'Resumen' }]} /><div className="booking-heading"><div><span className="eyebrow">Casi está</span><h1>Revisa tu reservación.</h1><p>Todo listo para empezar a crear una noche especial.</p></div><ProgressSteps active={3} /></div><div className="booking-layout"><section className="booking-main"><div className="review-card"><div className="review-card__top"><img src={salon.photos?.[0]} alt={salon.name} /><div><Badge tone="dark">{salon.type}</Badge><h2>{salon.name}</h2><p><MapPin size={14} /> {getSalonLocation(salon)}</p></div><Link to={`/reservar/${id}/fecha`} className="edit-link">Editar <ArrowRight size={14} /></Link></div><div className="review-grid"><div><span className="review-label">Fecha</span><strong><CalendarDays size={15} /> {formatDate(bookingDraft.date, 'EEEE d MMMM yyyy')}</strong></div><div><span className="review-label">Capacidad</span><strong><UsersRound size={15} /> Hasta {salon.capacity} personas</strong></div><div><span className="review-label">Dirección</span><strong><MapPin size={15} /> {salon.direccion}</strong></div><div><span className="review-label">Estado</span><strong><Badge tone="warning" dot>Pendiente de confirmación</Badge></strong></div></div></div><div className="review-card"><div className="review-section-heading"><div><span className="step-number">+</span><h2>Extras seleccionados</h2></div><Link to={`/reservar/${id}/servicios`} className="edit-link">Editar <ArrowRight size={14} /></Link></div>{services.length ? services.map((service) => <div className="review-service" key={service.id}><span><Sparkles size={15} /></span><strong>{service.nombre}</strong><span>{formatCurrency(service.precio)}</span></div>) : <p className="muted-copy">No agregaste servicios extra.</p>}</div>{error && <InfoNote tone="warning">{error}</InfoNote>}<InfoNote tone="warning"><strong>Pago seguro con Stripe.</strong> Al confirmar se creará la reservación y el pago quedará pendiente de conexión.</InfoNote></section><aside className="booking-aside"><div className="total-card"><span className="eyebrow">Resumen de inversión</span><div className="total-card__line"><span>Precio base del salón</span><strong>{formatCurrency(priceSalon)}</strong></div>{weekendSurcharge > 0 && <div className="total-card__line"><span>Extra por fin de semana</span><strong>{formatCurrency(weekendSurcharge)}</strong></div>}<div className="total-card__line"><span>Servicios extra</span><strong>{formatCurrency(totalServices)}</strong></div><div className="total-card__line total-card__grand"><span>Total</span><strong>{formatCurrency(total)}</strong></div><label className="terms-check"><input type="checkbox" checked={terms} onChange={(event) => setTerms(event.target.checked)} /><span>He leído y acepto las condiciones de reservación.</span></label><Button className="full-button" onClick={confirm} disabled={!terms || creating} icon={CreditCard}>{creating ? 'Creando reservación…' : 'Confirmar reservación'}</Button><p className="stripe-placeholder"><WalletCards size={14} /> Pagar: Pendiente de conexión con Stripe</p></div></aside></div></div></AnimatedPage>
 }
 
 const isValidEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim())

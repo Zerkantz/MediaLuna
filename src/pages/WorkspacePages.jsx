@@ -76,6 +76,10 @@ const reservationBelongsToOwner = (reservation, ownerId, ownerSalonIds = []) => 
     : reservation.duenoId === ownerId
   return ownedByReservation || reservation.salonesIds?.some((salonId) => ownerSalonIds.includes(salonId))
 }
+const isReservationChatArchived = (reservation) => {
+  const chatStatus = String(reservation?.estadoChat ?? reservation?.chatEstado ?? '').toLowerCase()
+  return reservation?.chatEliminadoPorDueno === true || reservation?.chatArchivado === true || ['archivado', 'eliminado'].includes(chatStatus)
+}
 const isVisibleSalon = (salon) => salon?.estado !== 'archivado' && salon?.active !== false
 const reservationStatusOptions = ['pendiente', 'cancelada', 'confirmada']
 const normalizeReservationStatus = (status) => reservationStatusOptions.includes(status) ? status : 'pendiente'
@@ -497,7 +501,8 @@ export function ClientReservationDetailPage() {
   const services = data.servicios.filter((service) => reservation.serviciosIds.includes(service.id))
   const ownerId = Array.isArray(reservation.duenoId) ? reservation.duenoId[0] : (reservation.duenoId || salon?.duenoId || salon?.ownerId)
   const owner = data.usuarios.find((u) => u.id === ownerId) || { nombre: 'Mariana Castañeda', rol: 'dueño' }
-  const weekendSurcharge = Number(reservation.extraFinDeSemana ?? getWeekendSurcharge(reservation.fecha)) || 0
+  const weekendSurcharge = Number(reservation.extraFinDeSemana ?? getWeekendSurcharge(reservation.fecha, salon?.extraFinSemana)) || 0
+  const chatArchivedByOwner = isReservationChatArchived(reservation)
 
   return (
     <AnimatedPage className="panel-page">
@@ -540,7 +545,7 @@ export function ClientReservationDetailPage() {
           </div>
           <div className="detail-breakdown">
             <div><span>Precio del salón</span><strong>{formatCurrency(reservation.precioSalon)}</strong></div>
-            <div><span>Extra fin de semana</span><strong>{formatCurrency(weekendSurcharge)}</strong></div>
+            {weekendSurcharge > 0 && <div><span>Extra por fin de semana</span><strong>{formatCurrency(weekendSurcharge)}</strong></div>}
             <div><span>Servicios extra</span><strong>{formatCurrency(reservation.totalServicios)}</strong></div>
             <div className="detail-breakdown__total"><span>Total</span><strong>{formatCurrency(reservation.total)}</strong></div>
           </div>
@@ -562,10 +567,13 @@ export function ClientReservationDetailPage() {
               size="sm"
               icon={Video}
               onClick={() => setShowVideoCall(true)}
+              disabled={chatArchivedByOwner}
             >
               Videollamada
             </Button>
           </div>
+
+          {chatArchivedByOwner && <InfoNote tone="warning" icon={CircleAlert}>Chat eliminado por el dueño.</InfoNote>}
 
           <StreamChatWidget
             reservation={reservation}
@@ -573,11 +581,13 @@ export function ClientReservationDetailPage() {
             counterpartName={owner.nombre}
             counterpartRole="Dueño del espacio"
             onMessageSent={(text) => notifyMessageSent(reservation, text)}
+            disabled={chatArchivedByOwner}
+            disabledMessage="Chat eliminado por el dueño."
           />
         </aside>
       </div>
 
-      {showVideoCall && (
+      {showVideoCall && !chatArchivedByOwner && (
         <DailyVideoCallModal
           reservation={reservation}
           currentUser={currentUser}
@@ -724,15 +734,45 @@ export function OwnerReservationsPage() {
 }
 
 export function OwnerChatsPage() {
-  const { data, currentUser, notifyMessageSent, notifyVideoCallStarted } = useApp()
+  const { data, currentUser, archiveOwnerChat, notifyMessageSent, notifyVideoCallStarted } = useApp()
   const [searchParams, setSearchParams] = useSearchParams()
-  const reservations = data.reservaciones.filter((reservation) => reservationBelongsToOwner(reservation, currentUser?.id, currentUser?.salonesIds))
+  const ownerReservations = data.reservaciones.filter((reservation) => reservationBelongsToOwner(reservation, currentUser?.id, currentUser?.salonesIds))
+  const reservations = ownerReservations.filter((reservation) => !isReservationChatArchived(reservation))
   const [showVideoCall, setShowVideoCall] = useState(false)
+  const [archivingChat, setArchivingChat] = useState(false)
   const requestedReservationId = searchParams.get('reservacion')
+  const activeReservationIds = reservations.map((reservation) => reservation.id).join('|')
+  const requestedArchivedReservation = requestedReservationId
+    ? ownerReservations.find((reservation) => reservation.id === requestedReservationId && isReservationChatArchived(reservation))
+    : null
 
-  const selectedReservation = reservations.find((r) => r.id === requestedReservationId) || reservations[0]
+  useEffect(() => {
+    if (!requestedReservationId) return
+    if (reservations.some((reservation) => reservation.id === requestedReservationId)) return
+    if (reservations[0]) setSearchParams({ reservacion: reservations[0].id }, { replace: true })
+  }, [activeReservationIds, requestedReservationId, reservations, setSearchParams])
+
+  const selectedReservation = requestedReservationId
+    ? reservations.find((r) => r.id === requestedReservationId) || null
+    : reservations[0] || null
   const client = selectedReservation ? data.usuarios.find((user) => user.id === selectedReservation.clienteId) : null
   const salon = selectedReservation ? data.salones.find((item) => selectedReservation.salonesIds.includes(item.id)) : null
+  const archiveSelectedChat = async () => {
+    if (!selectedReservation) return
+    const confirmed = window.confirm('¿Seguro que quieres eliminar este chat? El cliente ya no podrá escribir aquí.')
+    if (!confirmed) return
+    const nextReservation = reservations.find((reservation) => reservation.id !== selectedReservation.id)
+    setArchivingChat(true)
+    try {
+      const result = await archiveOwnerChat(selectedReservation.id)
+      if (result.ok) {
+        setShowVideoCall(false)
+        if (nextReservation) setSearchParams({ reservacion: nextReservation.id }, { replace: true })
+      }
+    } finally {
+      setArchivingChat(false)
+    }
+  }
 
   return (
     <AnimatedPage className="panel-page">
@@ -746,7 +786,7 @@ export function OwnerChatsPage() {
       <div className="chat-list-page">
         <div className="chat-threads workspace-card">
           {reservations.length === 0 ? (
-            <p className="muted-copy" style={{ padding: '16px' }}>No tienes reservaciones ni chats activos.</p>
+            <p className="muted-copy" style={{ padding: '16px' }}>No tienes chats activos.</p>
           ) : (
             reservations.map((reservation) => {
               const resClient = data.usuarios.find((user) => user.id === reservation.clienteId)
@@ -783,9 +823,14 @@ export function OwnerChatsPage() {
                   <h3>{client.nombre}</h3>
                   <small>{salon?.name} ({formatDate(selectedReservation.fecha, 'd MMM yyyy')})</small>
                 </div>
-                <Button variant="secondary" size="sm" icon={Video} onClick={() => setShowVideoCall(true)}>
-                  Videollamada con cliente
-                </Button>
+                <div className="owner-chat-actions">
+                  <Button variant="secondary" size="sm" icon={Video} onClick={() => setShowVideoCall(true)}>
+                    Videollamada con cliente
+                  </Button>
+                  <Button variant="danger" size="sm" icon={Trash2} onClick={archiveSelectedChat} disabled={archivingChat}>
+                    {archivingChat ? 'Eliminando…' : 'Eliminar chat'}
+                  </Button>
+                </div>
               </div>
 
               <div className="owner-chat-widget">
@@ -798,6 +843,12 @@ export function OwnerChatsPage() {
                 />
               </div>
             </>
+          ) : requestedArchivedReservation ? (
+            <div className="chat-empty-panel">
+              <MessageCircle size={28} />
+              <h2>Este chat fue archivado.</h2>
+              <p>Ya no puedes enviar mensajes ni iniciar videollamadas en esta conversación.</p>
+            </div>
           ) : (
             <div className="chat-empty-panel">
               <MessageCircle size={28} />
@@ -918,7 +969,7 @@ export function AdminSalonsPage() {
   const [query, setQuery] = useState('')
   const [editingId, setEditingId] = useState(null)
   const [uploading, setUploading] = useState(false)
-  const emptyForm = { name: '', type: '', location: '', phone: '', capacity: '', basePrice: '', description: '', duenoId: '', active: true, serviciosIds: [], urlImagen: '', idPublicoCloudinary: '' }
+  const emptyForm = { name: '', type: '', location: '', phone: '', capacity: '', basePrice: '', extraFinSemana: '', description: '', duenoId: '', active: true, serviciosIds: [], urlImagen: '', idPublicoCloudinary: '' }
   const [form, setForm] = useState(emptyForm)
   const owners = data.usuarios.filter((user) => user.rol === 'dueno' && user.activo)
   const update = (field) => (event) => {
@@ -929,7 +980,7 @@ export function AdminSalonsPage() {
         ? normalizePhoneInput(value)
         : field === 'capacity'
           ? normalizeNumberInput(value, { min: 1 })
-          : field === 'basePrice'
+          : ['basePrice', 'extraFinSemana'].includes(field)
             ? normalizePriceInput(value)
             : field === 'description'
               ? limitText(value, SALON_DESCRIPTION_MAX_LENGTH)
@@ -946,6 +997,7 @@ export function AdminSalonsPage() {
       phone: salon.phone ?? '',
       capacity: salon.capacity ?? '',
       basePrice: salon.basePrice ?? '',
+      extraFinSemana: salon.extraFinSemana ?? 0,
       description: salon.description ?? '',
       duenoId: salon.duenoId ?? salon.ownerId ?? owners.find((owner) => owner.salonesIds?.includes(salon.id))?.id ?? '',
       active: salon.active ?? true,
@@ -989,6 +1041,7 @@ export function AdminSalonsPage() {
       availableDates: currentSalon?.availableDates ?? [],
       basePrice: toBoundedPrice(form.basePrice),
       capacity: toBoundedNumber(form.capacity, { min: 1, fallback: 1 }),
+      extraFinSemana: toBoundedPrice(form.extraFinSemana || 0),
       description: limitText(form.description, SALON_DESCRIPTION_MAX_LENGTH).trim(),
       direccion: currentSalon?.direccion ?? limitText(form.location).trim(),
       location: limitText(form.location).trim(),
@@ -1025,7 +1078,7 @@ export function AdminSalonsPage() {
     ])
   })
   const columns = [{ key: 'name', label: 'Salón', render: (row) => <span className="table-person"><img src={row.urlImagen || row.photos?.[0]} alt="" /><span><strong>{row.name}</strong><small>{getSalonLocation(row)}</small></span></span> }, { key: 'duenoId', label: 'Dueño', render: (row) => data.usuarios.find((user) => user.id === row.duenoId || user.salonesIds?.includes(row.id))?.nombre ?? 'Sin asignar' }, { key: 'type', label: 'Tipo' }, { key: 'capacity', label: 'Capacidad', render: (row) => `${row.capacity} personas` }, { key: 'basePrice', label: 'Precio base', render: (row) => formatCurrency(row.basePrice) }, { key: 'active', label: 'Estado', render: (row) => <StatusBadge status={row.active ? 'activo' : 'inactivo'} /> }, { key: 'actions', label: '', render: (row) => <div className="table-actions"><button className="icon-button" type="button" title="Editar salón" onClick={() => startEdit(row)}><Pencil size={15} /></button><button className="icon-button" type="button" onClick={() => toggleSalon(row.id)} title={row.active ? 'Ocultar' : 'Publicar'}>{row.active ? <Eye size={15} /> : <Check size={15} />}</button></div> }]
-  return <AnimatedPage className="panel-page"><PanelIntro eyebrow="Catálogo" title="Gestión de salones" description="Administra espacios, precios, fotos y publicación." crumbs={[{ label: 'Admin', to: '/admin' }, { label: 'Salones' }]} actions={<Button icon={Plus} onClick={startCreate}>Nuevo salón</Button>} />{open && <div className="workspace-card inline-form-card" data-reveal><div><span className="eyebrow">{editingId ? 'Editar salón' : 'Alta de salón'}</span><h2>{editingId ? 'Actualizar espacio' : 'Agregar un nuevo espacio'}</h2><p>El formulario guarda los campos de salones, asigna dueño con duenoId y usa Cloudinary para la imagen principal.</p></div><form className="inline-form inline-form--salon" onSubmit={submit}><input required maxLength={TEXT_MAX_LENGTH} placeholder="Nombre del salón" value={form.name} onChange={update('name')} /><input required maxLength={TEXT_MAX_LENGTH} placeholder="Tipo de salón" value={form.type} onChange={update('type')} /><input required maxLength={TEXT_MAX_LENGTH} placeholder="Ciudad / zona" value={form.location} onChange={update('location')} /><input type="tel" inputMode="tel" maxLength="13" placeholder="Teléfono" value={form.phone} onChange={update('phone')} /><input required type="number" min="1" max={NUMBER_MAX_VALUE} placeholder="Capacidad" value={form.capacity} onChange={update('capacity')} /><input required type="number" min="0" max={PRICE_MAX_VALUE} placeholder="Precio base" value={form.basePrice} onChange={update('basePrice')} /><select required value={form.duenoId} onChange={update('duenoId')}><option value="">Asignar dueño</option>{owners.map((owner) => <option value={owner.id} key={owner.id}>{owner.nombre}</option>)}</select><textarea required maxLength={SALON_DESCRIPTION_MAX_LENGTH} placeholder="Descripción" value={form.description} onChange={update('description')} /><div className="checkbox-grid">{data.servicios.map((service) => <label key={service.id}><input type="checkbox" checked={form.serviciosIds.includes(service.id)} onChange={() => toggleServiceId(service.id)} />{service.nombre}</label>)}</div><label className="toggle-line"><input type="checkbox" checked={form.active} onChange={update('active')} /> Publicado</label><label className="upload-field"><ImagePlus size={16} />{uploading ? 'Subiendo...' : 'Subir imagen'}<input type="file" accept="image/*" onChange={uploadImage} /></label>{form.urlImagen && <span className="form-preview"><img src={form.urlImagen} alt="Preview del salón" />Imagen principal lista</span>}<div className="form-actions"><Button type="submit" size="sm" disabled={uploading}>{editingId ? 'Guardar cambios' : 'Guardar salón'}</Button>{editingId && <Button type="button" variant="danger" size="sm" onClick={archiveSalon}>Archivar salón</Button>}<Button type="button" variant="ghost" size="sm" onClick={resetForm}>Cancelar</Button></div></form><InfoNote tone="lilac"><ImagePlus size={15} /> Cloudinary · cloud_name: {CLOUDINARY_CONFIG.cloudName || 'pendiente'} · upload_preset: {CLOUDINARY_CONFIG.uploadPreset}. {cloudinaryUploadNote}</InfoNote></div>}<div className="workspace-card"><div className="table-toolbar"><div className="listing-search"><Search size={16} /><input value={query} maxLength={TEXT_MAX_LENGTH} onChange={(event) => setQuery(limitText(event.target.value))} placeholder="Buscar por salón, dueño, tipo, ciudad o estado" /></div><Badge tone="neutral">{rows.length} salones</Badge></div><Table columns={columns} rows={rows} /></div></AnimatedPage>
+  return <AnimatedPage className="panel-page"><PanelIntro eyebrow="Catálogo" title="Gestión de salones" description="Administra espacios, precios, fotos y publicación." crumbs={[{ label: 'Admin', to: '/admin' }, { label: 'Salones' }]} actions={<Button icon={Plus} onClick={startCreate}>Nuevo salón</Button>} />{open && <div className="workspace-card inline-form-card" data-reveal><div><span className="eyebrow">{editingId ? 'Editar salón' : 'Alta de salón'}</span><h2>{editingId ? 'Actualizar espacio' : 'Agregar un nuevo espacio'}</h2><p>El formulario guarda los campos de salones, asigna dueño con duenoId y usa Cloudinary para la imagen principal.</p></div><form className="inline-form inline-form--salon" onSubmit={submit}><input required maxLength={TEXT_MAX_LENGTH} placeholder="Nombre del salón" value={form.name} onChange={update('name')} /><input required maxLength={TEXT_MAX_LENGTH} placeholder="Tipo de salón" value={form.type} onChange={update('type')} /><input required maxLength={TEXT_MAX_LENGTH} placeholder="Ciudad / zona" value={form.location} onChange={update('location')} /><input type="tel" inputMode="tel" maxLength="13" placeholder="Teléfono" value={form.phone} onChange={update('phone')} /><input required type="number" min="1" max={NUMBER_MAX_VALUE} placeholder="Capacidad" value={form.capacity} onChange={update('capacity')} /><input required type="number" min="0" max={PRICE_MAX_VALUE} placeholder="Precio base" value={form.basePrice} onChange={update('basePrice')} /><input type="number" min="0" max={PRICE_MAX_VALUE} placeholder="Extra por fin de semana" value={form.extraFinSemana} onChange={update('extraFinSemana')} /><select required value={form.duenoId} onChange={update('duenoId')}><option value="">Asignar dueño</option>{owners.map((owner) => <option value={owner.id} key={owner.id}>{owner.nombre}</option>)}</select><textarea required maxLength={SALON_DESCRIPTION_MAX_LENGTH} placeholder="Descripción" value={form.description} onChange={update('description')} /><div className="checkbox-grid">{data.servicios.map((service) => <label key={service.id}><input type="checkbox" checked={form.serviciosIds.includes(service.id)} onChange={() => toggleServiceId(service.id)} /><span>{service.nombre}</span></label>)}</div><label className="toggle-line"><input type="checkbox" checked={form.active} onChange={update('active')} /> Publicado</label><label className="upload-field"><ImagePlus size={16} />{uploading ? 'Subiendo...' : 'Subir imagen'}<input type="file" accept="image/*" onChange={uploadImage} /></label>{form.urlImagen && <span className="form-preview"><img src={form.urlImagen} alt="Preview del salón" />Imagen principal lista</span>}<div className="form-actions"><Button type="submit" size="sm" disabled={uploading}>{editingId ? 'Guardar cambios' : 'Guardar salón'}</Button>{editingId && <Button type="button" variant="danger" size="sm" onClick={archiveSalon}>Archivar salón</Button>}<Button type="button" variant="ghost" size="sm" onClick={resetForm}>Cancelar</Button></div></form><InfoNote tone="lilac"><ImagePlus size={15} /> Cloudinary · cloud_name: {CLOUDINARY_CONFIG.cloudName || 'pendiente'} · upload_preset: {CLOUDINARY_CONFIG.uploadPreset}. {cloudinaryUploadNote}</InfoNote></div>}<div className="workspace-card"><div className="table-toolbar"><div className="listing-search"><Search size={16} /><input value={query} maxLength={TEXT_MAX_LENGTH} onChange={(event) => setQuery(limitText(event.target.value))} placeholder="Buscar por salón, dueño, tipo, ciudad o estado" /></div><Badge tone="neutral">{rows.length} salones</Badge></div><Table columns={columns} rows={rows} /></div></AnimatedPage>
 }
 
 export function AdminServicesPage() {

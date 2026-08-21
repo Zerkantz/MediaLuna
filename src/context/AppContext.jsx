@@ -710,6 +710,33 @@ export function AppProvider({ children }) {
     return { ok: true, reservation: updated, message }
   }
 
+  const archiveOwnerChat = async (id) => {
+    const reservation = data.reservaciones.find((item) => item.id === id)
+    if (!reservation) return { ok: false, message: 'Reservación no encontrada.' }
+    const ownerId = getReservationOwnerId(reservation, data.salones, data.usuarios)
+    if (currentUser?.rol !== 'dueno' || ownerId !== currentUser.id) {
+      return { ok: false, message: 'Solo el dueño de la reservación puede eliminar este chat.' }
+    }
+    if (reservation.chatEliminadoPorDueno) {
+      return { ok: true, reservation, message: 'El chat ya estaba eliminado.' }
+    }
+
+    try {
+      const updated = await actualizarReservacion(id, {
+        chatEliminadoPorDueno: true,
+        chatEliminadoPor: currentUser.id,
+        fechaEliminacionChat: format(new Date(), 'yyyy-MM-dd'),
+      })
+      refreshData({ ...data, reservaciones: data.reservaciones.map((item) => item.id === id ? updated : item) })
+      notify('Chat eliminado para esta reservación.', 'info')
+      return { ok: true, reservation: updated, message: 'Chat eliminado.' }
+    } catch (error) {
+      console.error('No se pudo eliminar el chat:', error)
+      notify('No se pudo eliminar el chat.', 'warning')
+      return { ok: false, message: 'No se pudo eliminar el chat.' }
+    }
+  }
+
   const saveStripeSessionReference = async ({ reservationId, paymentId, sessionId }) => {
     if (!reservationId || !sessionId) return null
 
@@ -774,8 +801,8 @@ export function AppProvider({ children }) {
     const serviceIds = services.map((service) => service.id)
     const totalServices = services.reduce((total, service) => total + Number(service.precio || 0), 0)
     const owner = findSalonOwner(data.usuarios, salon)
-    const priceSalon = Number(selectedAvailability.precio ?? salon.basePrice ?? 0) || 0
-    const extraFinDeSemana = getWeekendSurcharge(bookingDraft.date)
+    const priceSalon = Number(salon.basePrice ?? selectedAvailability.precio ?? 0) || 0
+    const extraFinDeSemana = getWeekendSurcharge(bookingDraft.date, salon.extraFinSemana)
     const salonIds = [salon.id]
     const total = priceSalon + extraFinDeSemana + totalServices
     const fechaCreacion = format(new Date(), 'yyyy-MM-dd')
@@ -868,11 +895,13 @@ export function AppProvider({ children }) {
     try {
       const reservacion = data.reservaciones.find((item) => item.id === reservationId)
       if (!reservacion) return { ok: false, message: 'Reservación no encontrada.' }
+      const reservationSalon = data.salones.find((salon) => reservacion.salonesIds?.includes(salon.id))
+      const fallbackWeekendExtra = Number(reservacion.extraFinDeSemana ?? getWeekendSurcharge(reservacion.fecha, reservationSalon?.extraFinSemana)) || 0
 
       const pago = data.pagos.find((item) => item.reservacionId === reservacion.id)
         ?? await getPagoPorReservacion(reservacion.id)
       const total = Number(
-        pago?.monto ?? reservacion.total ?? (Number(reservacion.precioSalon || 0) + Number(reservacion.extraFinDeSemana || 0) + Number(reservacion.totalServicios || 0)),
+        pago?.monto ?? reservacion.total ?? (Number(reservacion.precioSalon || 0) + fallbackWeekendExtra + Number(reservacion.totalServicios || 0)),
       )
       const payload = {
         reservationId: reservacion.id,
@@ -1070,6 +1099,7 @@ export function AppProvider({ children }) {
     updateAvailability,
     updateReservationStatus,
     cancelReservation,
+    archiveOwnerChat,
     selectSalon,
     selectDate,
     toggleService,
